@@ -1,4 +1,6 @@
 **/.DS_Store
 .Rhistory
+.Rprofile
 .Rproj.user
 example
+**/setup.R
