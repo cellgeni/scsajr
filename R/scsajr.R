@@ -424,13 +424,13 @@ get_groupby_factor <- function(x, groupby, sep = DELIMETER) {
 #'   }
 #'
 #' @details
-#' 1. Converts \code{groupby} into a single grouping vector via \code{get_groupby_factor()}.
+#' 1. Converts \code{groupby} into a single grouping vector \code{group_factor} via \code{get_groupby_factor()}.
 #' 2. Calls \code{fit_as_glm()} with formula \code{x ~ group}, where \code{x} is the per‐segment \code{cbind(i,e)}.
 #' 3. Extracts raw p‐values for the \code{group} term, adjusts them (Benjamini–Hochberg) into \code{group_fdr}.
 #' 4. Computes delta‐PSI (\code{dpsi}), \code{low_state}, and \code{high_state} for each segment via \code{get_dpsi()}.
 #' 5. Combine results (endure matching row order)
 #'
-#' @seealso \code{\link{fit_as_glm}}, \code{\link{get_groupby_factor}}, \code{\link{get_dpsi}}
+#' @seealso \code{\link{fit_as_glm}}, \code{\link{get_groupby_factor}}, \code{\link{get_dpsi}}, \code{\link{test_pair_as}}
 #' @export
 test_all_groups_as <- function(
     pbas,
@@ -464,6 +464,92 @@ test_all_groups_as <- function(
     dpsi_df[c("low_state", "high_state", "dpsi")]
   )
   rownames(res) <- rownames(pbas)
+  return(res)
+}
+
+
+#' Test alternative splicing between two conditions (pairwise)
+#'
+#' For a \code{SummarizedExperiment} of splicing segments with assays “i” (inclusion counts) and “e” (exclusion counts),
+#'  this function tests for differential splicing between two specified groups (e.g., two cell types) using a quasi‐binomial GLM per segment.
+#' It returns a data.frame of p‐values, FDR, and delta‐PSI between the two conditions.
+#'
+#' @param pbas A \code{SummarizedExperiment} where each row is a segment and each column is a pseudobulk.
+#'   Must contain assays named “i” (inclusion) and “e” (exclusion).
+#'   Rows correspond to segments; columns correspond to samples/pseudobulks.
+#' @param groupby Either:
+#'   \itemize{
+#'     \item A vector of length \code{ncol(pbas)} that directly gives a group label for each column, or
+#'     \item One or more column names in \code{colData(pbas)}, whose values (pasted together if multiple) define the grouping factor.
+#'   }
+#'   See \code{\link{get_groupby_factor}} for details.
+#' @param conditions A length‐2 character vector specifying the two group labels to compare (e.g., \code{c("A", "B")}).
+#' @param parallel Logical; if \code{TRUE}, fit per‐segment GLMs in parallel (requires a registered \code{plyr} backend). Default \code{FALSE}.
+#'
+#' @return A data.frame with one row per segment (rownames = \code{rownames(pbas)}), containing columns:
+#'   \describe{
+#'     \item{overdispersion}{Estimated dispersion from each segment’s GLM.}
+#'     \item{pv}{Raw p‐value for the group term (two‐level factor).}
+#'     \item{fdr}{Benjamini–Hochberg FDR (across all segments).}
+#'     \item{dpsi}{Difference in mean PSI between \code{conditions[2]} and \code{conditions[1]}.}
+#'   }
+#'
+#' @details
+#' 1. Converts \code{groupby} into a single grouping vector \code{group_factor} via \code{get_groupby_factor()}.
+#' 2. Filters \code{group_factor} and \code{pbas} to keep only columns corresponding to the two \code{conditions}.
+#' 3. Calls \code{fit_as_glm()} with \code{formula = x ~ group} to get raw p‐values for each segment.
+#' 4. Adjusts p‐values (Benjamini–Hochberg) into \code{fdr}.
+#' 5. Computes delta‐PSI (\code{dpsi}) per segment by pseudobulking and calling \code{calc_psi()}, then taking
+#'    mean PSI per condition and subtracting.
+#'
+#' @seealso \code{\link{fit_as_glm}}, \code{\link{get_groupby_factor}}, \code{\link{calc_psi}}, \code{\link{pseudobulk}}, \code{\link{test_all_groups_as}}
+#' @export
+test_pair_as <- function(
+    pbas,
+    groupby,
+    conditions,
+    parallel = FALSE) {
+  # 1. Construct grouping factor
+  group_factor <- get_groupby_factor(pbas, groupby)
+
+  # 2. Identify columns (samples) that belong to the two conditions
+  keep_cols <- which(group_factor %in% conditions)
+  group_factor <- group_factor[keep_cols]
+  pbas_sub <- pbas[, keep_cols]
+
+  # 3. Fit GLMs per segment on only the two conditions, returning raw p‐values
+  pv_df <- fit_as_glm(
+    pbas = pbas_sub,
+    formula = x ~ group,
+    data_terms = list(group = group_factor),
+    return_pv = TRUE,
+    parallel = parallel
+  )
+  # pv_df has columns: overdispersion, group
+
+  # 4. Adjust p‐values (Benjamini–Hochberg)
+  pv_df <- as.data.frame(pv_df, stringsAsFactors = FALSE)
+  pv_df$fdr <- stats::p.adjust(pv_df$group, method = "BH")
+
+  # 5. Compute PSI matrix for the two‐condition pseudobulk
+  pb <- pseudobulk(pbas_sub, group_factor)
+  psi_mat <- calc_psi(pb)
+  # Extract PSI for the two conditions in the order given by 'conditions'
+  psi_vals <- psi_mat[, conditions, drop = FALSE]
+  dpsi_vec <- psi_vals[, 2] - psi_vals[, 1]
+
+  # 6. Combine results into final data.frame
+  res <- data.frame(
+    overdispersion = pv_df$overdispersion,
+    pv = pv_df$group,
+    fdr = pv_df$fdr,
+    dpsi = dpsi_vec,
+    row.names = rownames(pbas_sub),
+    stringsAsFactors = FALSE
+  )
+
+  # Ensure rows are in the same order as the original pbas
+  res <- res[rownames(pbas), , drop = FALSE]
   return(res)
 }
 
