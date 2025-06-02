@@ -18,10 +18,12 @@ delimeter <- "$"
 #' @return A data.frame with columns `pv`, `fdr`, `dpsi`, `seg_id`, and `group`(cell type),
 #'         sorted by decreasing |dpsi|.
 #' @examples
-#' \dontrun{
+#' # Load example data
+#' data(pbasf)
+#'
 #' # Select top 10 markers with stricter thresholds:
 #' df <- select_markers(pbasf@metadata$markers, n = 10, fdr_thr = 0.01, dpsi_thr = 0.2)
-#' }
+#' head(df)
 #' @export
 select_markers <- function(segment_stats, n = 5, fdr_thr = 0.05, dpsi_thr = 0.1, clean_duplicates = TRUE) {
   # dataframe to store selected markers

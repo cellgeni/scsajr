@@ -35,8 +35,10 @@ then selects the top n markers per cell type, and removing duplicates
 (keeping only the strongest marker per segment across all cell_type).
 }
 \examples{
-\dontrun{
+# Load example data
+data(pbasf)
+
 # Select top 10 markers with stricter thresholds:
 df <- select_markers(pbasf@metadata$markers, n = 10, fdr_thr = 0.01, dpsi_thr = 0.2)
-}
+head(df)
 }
