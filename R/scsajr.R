@@ -12,8 +12,9 @@ delimeter <- "$"
 #'   3. segments (rows) that do not meet minimum coverage across pseudobulks,
 #'   4. segments with low variability (standard deviation of PSI).
 #'
-#' @param pbas A \code{SummarizedExperiment} object. It must contain assays named “i”, “e”, and “psi”.
-#'   Additionally, \code{colData(pbas)} should have a column (or combination of columns) specified by \code{groupby}, and a column \code{ncells} indicating how many cells contributed to each pseudobulk.
+#' @param pbas A \code{SummarizedExperiment} where each row is a segment and each column is a pseudobulk.
+#'   Must contain assays named “i” (inclusion) and “e” (exclusion).
+#'   Rows correspond to segments; columns correspond to samples/pseudobulks.
 #' @param sample_filter Logical vector (length = number of columns in \code{pbas}) indicating which samples to retain initially.
 #'   Defaults to \code{TRUE} for all samples.
 #' @param sites Character vector of splice‐site patterns to keep (e.g., \code{c("ad", "aa", "dd")}). Only segments whose \code{rowData(pbas)$sites} is in this set will be retained.
@@ -113,6 +114,128 @@ filter_segments_and_samples <- function(
 
   # Return the filtered SummarizedExperiment
   return(pbas)
+}
+
+
+#' Fit a quasi‐binomial GLM for alternative splicing per segment
+#'
+#' For each segment (row) in a \code{SummarizedExperiment} with assays “i” (inclusion counts) and “e” (exclusion counts),
+#' this function fits a quasi‐binomial generalized linear model of the form \code{i / (i + e) ~ predictors},
+#' adding a pseudocount if desired. It can optionally return p‐values via a likelihood‐ratio test.
+#'
+#' @param pbas A \code{SummarizedExperiment} where each row is a segment and each column is a pseudobulk.
+#'   Must contain assays named “i” (inclusion) and “e” (exclusion).
+#'   Rows correspond to segments; columns correspond to samples/pseudobulks.
+#' @param formula An \code{\link[stats]{formula}} object specifying the model, e.g., \code{i ~ group}.
+#'   Internally, the function treats “i” and “e” as a two‐column response.
+#' @param data_terms A named list of covariates: data.frame columns referenced in \code{formula}.
+#'   For example, if \code{formula = i ~ group}, then \code{data_terms = list(group = group_factor)} where \code{group_factor} is a vector of length \code{ncol(pbas)}.
+#' @param pseudocount A numeric fraction of each count total to add to both “i” and “e”, expressed as a fraction of the total counts. Default 0 (no pseudocount).
+#' @param parallel Logical; if \code{TRUE}, uses \code{\link[plyr]{alply}(…, .parallel = TRUE)} to fit models in parallel (requires registered backend). Default \code{FALSE}.
+#' @param progress Character string passed to \code{.progress} in \code{\link[plyr]{alply}}. Default \code{"none"}.
+#' @param return_pv Logical; if \code{TRUE}, perform a quasi‐likelihood ratio test per segment to return p‐values for each term in \code{formula}.
+#'   Otherwise, return fitted \code{\link[stats]{glm}} objects. Default \code{FALSE}.
+#' @param overdisp Logical; if \code{TRUE}, account for overdispersion when computing test statistics. Default \code{TRUE}.
+#' @param disp_param Optional numeric vector of length \code{nrow(pbas)} providing dispersion parameters per segment.
+#'   If \code{NULL}, dispersion is estimated from each model’s residuals.
+#'
+#' @return If \code{return_pv = FALSE}, a named list of length \code{nrow(pbas)} of fitted \code{glm} objects
+#'   (or \code{NA} for segments where fitting failed). Names correspond to \code{rownames(pbas)}.
+#'   If \code{return_pv = TRUE}, a data.frame with one row per segment, columns:
+#'   \describe{
+#'     \item{overdispersion}{Estimated dispersion (or provided \code{disp_param}).}
+#'     \item{<term>}{Likelihood‐ratio p‐value for each term in \code{formula}.}
+#'   }
+#'   Row names correspond to \code{rownames(pbas)}.
+#'
+#' @details
+#' The function loops over each segment, constructs a two‐column matrix \code{cbind(i, e)}, adds pseudocounts if requested, and fits a quasi‐binomial \code{\link[stats]{glm}}.
+#' If \code{return_pv = TRUE}, it calls \code{\link{asq_lrt}} to compute a likelihood‐ratio test for each term in \code{formula}.
+#' Any errors or warnings during fitting are caught; segments with fitting errors return \code{NA}.
+#'
+#' @seealso \code{\link{asq_lrt}}, \code{\link[stats]{glm}}, \code{\link[plyr]{alply}}
+#' @export
+fit_as_glm <- function(
+    pbas,
+    formula,
+    data_terms,
+    pseudocount = 0,
+    parallel = FALSE,
+    progress = "none",
+    return_pv = FALSE,
+    overdisp = TRUE,
+    disp_param = NULL) {
+  # Ensure plyr is available
+  if (!requireNamespace("plyr", quietly = TRUE)) {
+    stop("Please install the 'plyr' package to use fit_as_glm().")
+  }
+
+  # Extract term names from the formula
+  term_labels <- attr(terms(formula), "term.labels")
+
+  # For each segment (row), fit a quasi-binomial GLM
+  results_list <- plyr::alply(
+    .data = seq_len(nrow(pbas)),
+    .margins = 1,
+    .fun = function(i) {
+      # 1. Build the i/e matrix and add pseudocounts if specified
+      inc_vec <- SummarizedExperiment::assay(pbas, "i")[i, ]
+      exc_vec <- SummarizedExperiment::assay(pbas, "e")[i, ]
+      tot <- inc_vec + exc_vec
+
+      # Add pseudocount proportional to total counts for each sample
+      if (pseudocount > 0) {
+        adj <- tot * pseudocount
+        inc_vec <- inc_vec + adj
+        exc_vec <- exc_vec + adj
+      }
+
+      # Place adjusted counts into the data frame used by glm()
+      #    'x' must be a two-column matrix: cbind(i, e)
+      data_terms$x <- cbind(inc_vec, exc_vec)
+
+      # 2. Fit the quasi-binomial GLM
+      fit <- tryCatch(
+        stats::glm(formula, data = data_terms, family = "quasibinomial"),
+        error = function(e) {
+          warning(paste0("Segment ", rownames(pbas)[i], ": ", e$message))
+          return(NA)
+        },
+        warning = function(w) {
+          warning(paste0("Segment ", rownames(pbas)[i], ": ", w$message))
+          return(NA)
+        }
+      )
+
+      # 3. If return_pv and fit succeeded, compute p-values via LRT
+      if (return_pv && !is.na(fit)[1]) {
+        fit <- asq_lrt(
+          fit,
+          overdisp = overdisp,
+          disp_param = disp_param[i],
+          term_labels = term_labels,
+          seg_id = rownames(pbas)[i]
+        )
+      }
+
+      fit
+    },
+    .parallel = parallel,
+    .progress = progress
+  )
+
+  # If return_pv, combine p-value results into a data.frame
+  if (return_pv) {
+    pv_df <- do.call(rbind, results_list)
+    rownames(pv_df) <- rownames(pbas)
+    colnames(pv_df) <- c("overdispersion", term_labels)
+    return(pv_df)
+  }
+
+  # Otherwise, return a named list of glm objects (or NA)
+  names(results_list) <- rownames(pbas)
+  attr(results_list, "term.labels") <- term_labels
+  return(results_list)
 }
 
 

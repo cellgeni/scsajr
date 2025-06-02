@@ -18,8 +18,9 @@ filter_segments_and_samples(
 )
 }
 \arguments{
-\item{pbas}{A \code{SummarizedExperiment} object. It must contain assays named “i”, “e”, and “psi”.
-Additionally, \code{colData(pbas)} should have a column (or combination of columns) specified by \code{groupby}, and a column \code{ncells} indicating how many cells contributed to each pseudobulk.}
+\item{pbas}{A \code{SummarizedExperiment} where each row is a segment and each column is a pseudobulk.
+Must contain assays named “i” (inclusion) and “e” (exclusion).
+Rows correspond to segments; columns correspond to samples/pseudobulks.}
 
 \item{sample_filter}{Logical vector (length = number of columns in \code{pbas}) indicating which samples to retain initially.
 Defaults to \code{TRUE} for all samples.}
