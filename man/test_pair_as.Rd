@@ -47,5 +47,5 @@ mean PSI per condition and subtracting.
 }
 }
 \seealso{
-\code{\link{fit_as_glm}}, \code{\link{get_groupby_factor}}, \code{\link{calc_psi}}, \code{\link{pseudobulk}}
+\code{\link{fit_as_glm}}, \code{\link{get_groupby_factor}}, \code{\link{calc_psi}}, \code{\link{pseudobulk}}, \code{\link{test_all_groups_as}}
 }

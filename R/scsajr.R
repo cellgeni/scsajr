@@ -445,7 +445,7 @@ test_all_groups_as <- function(
     formula = x ~ group,
     data_terms = list(group = group_factor),
     return_pv = TRUE,
-    parallel = TRUE
+    parallel = parallel
   )
   # pv_df has columns: overdispersion, group (p‐value)
 
@@ -551,6 +551,109 @@ test_pair_as <- function(
   # Ensure rows are in the same order as the original pbas
   res <- res[rownames(pbas), , drop = FALSE]
   return(res)
+}
+
+
+#' Identify marker segments for each group via one‐vs‐rest tests
+#'
+#' For a \code{SummarizedExperiment} of splicing segments with assays “psi” (percent spliced‐in),
+#'  this function conducts, for each unique group label, a one‐vs‐rest quasi‐binomial GLM test
+#'  (i.e., comparing that group to all other samples).
+#' It returns p‐values and delta‐PSI matrices (segments × groups).
+#'
+#' @param pbas A \code{SummarizedExperiment} where each row is a segment and each column is a pseudobulk.
+#'   Must contain assays “i”, “e”, and “psi”.
+#'   Rows correspond to segments; columns correspond to samples/pseudobulks.
+#' @param groupby Either:
+#'   \itemize{
+#'     \item A vector of length \code{ncol(pbas)} that directly gives a group label for each column, or
+#'     \item One or more column names in \code{colData(pbas)}, whose values (pasted together if multiple) define the grouping factor.
+#'   }
+#'   See \code{\link{get_groupby_factor}} for details.
+#' @param parallel Logical; if \code{TRUE}, fit per‐segment GLMs in parallel (requires a registered \code{plyr} backend). Default \code{FALSE}.
+#' @param verbose Logical; if \code{TRUE}, prints each group being tested. Default \code{FALSE}.
+#'
+#' @return A list with three elements:
+#'   \describe{
+#'     \item{pv}{Matrix: Raw p‐values, with rows = segments, columns = group labels}
+#'     \item{fdr}{Matrix: Benjamini–Hochberg FDR (across all segments)}
+#'     \item{dpsi}{Matrix: Delta‐PSI (mean PSI(group) – mean PSI(others)) per segment}
+#'   }
+#'   Row names of each matrix are \code{rownames(pbas)}; column names are the unique groups.
+#'
+#' @details
+#' 1. Builds a grouping factor via \code{get_groupby_factor(pbas, groupby)}.
+#' 2. For each unique label \code{celltype} in that factor:
+#'    \enumerate{
+#'      \item Creates a binary factor \code{f} where \code{f == TRUE} if sample’s group == \code{celltype}, FALSE otherwise.
+#'      \item Calls \code{fit_as_glm()} with \code{formula = x ~ f} and \code{data_terms = list(f = f)}, requesting p‐values (\code{return_pv = TRUE}).
+#'      \item Extracts the “group” p‐value column (corresponding to \code{f}) for each segment and stores in \code{pv[, celltype]}.
+#'      \item Computes \code{dpsi[, celltype]} as \code{mean(psi[segment, f]) – mean(psi[segment, !f])}.
+#'    }
+#' 3. Adjusts each column of \code{pv} by Benjamini–Hochberg into \code{fdr[, celltype]}.
+#'
+#' @seealso \code{\link{fit_as_glm}}, \code{\link{get_groupby_factor}}, \code{\link{calc_psi}}
+#' @export
+find_marker_as <- function(
+    pbas,
+    groupby,
+    parallel = FALSE,
+    verbose = FALSE) {
+  # 1. Construct grouping vector (length = ncol)
+  group_factor <- get_groupby_factor(pbas, groupby)
+  unique_groups <- unique(group_factor)
+  n_segs <- nrow(pbas)
+  n_groups <- length(unique_groups)
+
+  # 2. Initialize result matrices
+  pv_mat <- matrix(NA_real_,
+    nrow = n_segs, ncol = n_groups,
+    dimnames = list(rownames(pbas), unique_groups)
+  )
+  dpsi_mat <- matrix(NA_real_,
+    nrow = n_segs, ncol = n_groups,
+    dimnames = list(rownames(pbas), unique_groups)
+  )
+
+  # 3. For each group, perform one‐vs‐rest test
+  for (celltype in unique_groups) {
+    if (verbose) {
+      message("Testing group: ", celltype)
+    }
+    # Binary factor: TRUE if sample belongs to this group
+    f <- group_factor == celltype
+
+    # Fit GLM per segment; return a data.frame with columns: overdispersion and 'group' p‐value
+    glm_res <- fit_as_glm(
+      pbas       = pbas,
+      formula    = x ~ f,
+      data_terms = list(f = f),
+      return_pv  = TRUE,
+      parallel   = parallel
+    )
+    # glm_res[data.frame]: rownames = segment IDs, col 'group' = p‐value
+
+    # Store raw p‐values for this group
+    pv_mat[, celltype] <- glm_res[, "group"]
+
+    # Compute dpsi: for each segment, mean PSI in 'celltype' minus mean PSI in others
+    psi_vals <- SummarizedExperiment::assay(pbas, "psi")
+
+    # For rows with all-NA in either subset, result is NA automatically
+    mean_ct <- rowMeans(psi_vals[, f, drop = FALSE], na.rm = TRUE)
+    mean_other <- rowMeans(psi_vals[, !f, drop = FALSE], na.rm = TRUE)
+    dpsi_mat[, celltype] <- mean_ct - mean_other
+  }
+
+  # 4. Adjust p‐values column‐wise (BH)
+  fdr_mat <- apply(pv_mat, 2, stats::p.adjust, method = "BH")
+
+  # 5. Return list of matrices
+  return(list(
+    pv = pv_mat,
+    fdr = fdr_mat,
+    dpsi = dpsi_mat
+  ))
 }
 
 

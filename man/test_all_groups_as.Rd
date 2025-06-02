@@ -46,5 +46,5 @@ It returns a data.frame of p‐values, adjusted FDR, and delta‐PSI for each se
 }
 }
 \seealso{
-\code{\link{fit_as_glm}}, \code{\link{get_groupby_factor}}, \code{\link{get_dpsi}}
+\code{\link{fit_as_glm}}, \code{\link{get_groupby_factor}}, \code{\link{get_dpsi}}, \code{\link{test_pair_as}}
 }
