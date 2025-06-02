@@ -2,5 +2,6 @@
 
 export(filter_segments_and_samples)
 export(fit_as_glm)
+export(get_groupby_factor)
 export(qbinom_lrt)
 export(select_markers)

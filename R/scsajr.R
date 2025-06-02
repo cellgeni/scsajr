@@ -1,6 +1,6 @@
 options(error = function(e) quit("no", 1))
 
-delimeter <- "$"
+DELIMETER <- "$"
 
 
 #' Filter segments and samples based on coverage and group criteria
@@ -325,6 +325,74 @@ qbinom_lrt <- function(
   pvals <- a_tbl[2:(1 + length(term_labels)), 5]
   result[-1] <- pvals
   return(result)
+}
+
+
+#' Determine grouping factor from a data.frame or SummarizedExperiment
+#'
+#' If \code{groupby} is a vector whose length matches the number of rows (or columns), this function treats it as the grouping factor directly.
+#' Otherwise, if \code{groupby} is one or more column names in a data.frame (or in \code{colData(se)}),
+#' it pastes those columns together (with a delimiter) to form a grouping factor.
+#'
+#' @param x Either a \code{SummarizedExperiment} (in which case its \code{colData()} is used) or a \code{data.frame} whose rows correspond to samples/pseudobulks.
+#' @param groupby Either:
+#'   \itemize{
+#'     \item A vector of length \code{nrow(x)}: treated as the grouping factor directly.
+#'     \item A character scalar or vector of column names in \code{x}: those columns are pasted (row‐wise) with a delimiter to form the grouping factor.
+#'   }
+#' @param sep Character string used to separate pasted values when \code{groupby} is multiple column names. Default is \code{"\$"}.
+#'
+#' @return A character vector (or factor) of length \code{nrow(x)}, representing the grouping factor.
+#'   If \code{groupby} was already the same length as \code{nrow(x)}, it is returned unchanged.
+#'   Otherwise, it pastes together columns of \code{x}.
+#'
+#' @examples
+#' df <- data.frame(
+#'   sample = paste0("S", 1:4),
+#'   celltype = c("A", "A", "B", "B"),
+#'   batch = c("X", "Y", "X", "Y")
+#' )
+#'
+#' # Case 1: groupby is a factor vector
+#' grp1 <- get_groupby_factor(df, groupby = c("A", "A", "B", "B"))
+#'
+#' # Case 2: groupby is one column name
+#' grp2 <- get_groupby_factor(df, groupby = "celltype")
+#'
+#' # Case 3: groupby is multiple column names
+#' grp3 <- get_groupby_factor(df, groupby = c("celltype", "batch"))
+#'
+#' print(grp1)
+#' print(grp2)
+#' print(grp3)
+#'
+#' @seealso \code{\link{filter_segments_and_samples}}, \code{\link{test_all_groups_as}}
+#' @export
+get_groupby_factor <- function(x, groupby, sep = DELIMETER) {
+  # If x is SummarizedExperiment, extract its colData as a data.frame
+  if ("SummarizedExperiment" %in% class(x)) {
+    x <- as.data.frame(SummarizedExperiment::colData(x))
+  }
+  # Now x must be a data.frame; number of rows = number of samples/pseudobulks
+  n <- nrow(x)
+
+  # If groupby is a vector whose length equals n, just return it
+  if (length(groupby) == n) {
+    return(groupby)
+  }
+
+  # Otherwise, check that every element of groupby is a column in x
+  if (all(groupby %in% colnames(x))) {
+    #    a) Select those columns: x[, groupby, drop = FALSE]
+    #    b) Paste them together row-wise with the separator “sep”
+    pasted <- do.call(paste, c(x[, groupby, drop = FALSE], sep = sep))
+    return(pasted)
+  }
+
+  stop(
+    "`groupby` must be either a factor/vector of length ", n,
+    " or a column name (or names) in the provided data.frame."
+  )
 }
 
 
