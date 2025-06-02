@@ -171,7 +171,7 @@ fit_as_glm <- function(
   }
 
   # Extract term names from the formula
-  term_labels <- attr(terms(formula), "term.labels")
+  term_labels <- attr(stats::terms(formula), "term.labels")
 
   # For each segment (row), fit a quasi-binomial GLM
   results_list <- plyr::alply(
