@@ -239,6 +239,95 @@ fit_as_glm <- function(
 }
 
 
+#' Quasi‐likelihood ratio test (Chi-square ANOVA) for a fitted quasi‐binomial GLM
+#'
+#' Given a fitted \code{glm(..., family = "quasibinomial")}, this function computes a likelihood‐ratio test for each term in the model, accounting for overdispersion.
+#'
+#' @param fit_obj A fitted \code{glm} object (quasi‐binomial family).
+#' @param overdisp Logical; if \code{TRUE}, use estimated dispersion from \code{fit_obj} (or \code{disp_param}) when computing test statistics.
+#'   If \code{FALSE}, force dispersion = 1 (i.e., treat as simple binomial).
+#' @param disp_param Optional numeric; if provided, use this as the dispersion parameter for the test.
+#'   Otherwise, estimate dispersion from \code{fit_obj}’s residuals.
+#' @param term_labels Character vector of term names (excluding the intercept) in the original formula, in the same order returned by \code{attr(terms(formula), "term.labels")}.
+#' @param seg_id Character scalar; segment identifier (row name) used in warning messages.
+#'
+#' @return A numeric vector of length \code{length(term_labels) + 1}.
+#'   The first element is the dispersion estimate actually used (either \code{disp_param} or \code{summary(fit_obj)$dispersion}),
+#'   and the remaining elements are p‐values (Chisq tests) for each term in \code{term_labels}, in the same order.
+#'   If \code{fit_obj} is \code{NA} (fitting failed), returns a vector of \code{NA}s of appropriate length.
+#'
+#' @details
+#' 1. If \code{disp_param} is \code{NULL}, we take \code{summary(fit_obj)$dispersion} as the overdispersion estimate.
+#'    If the model has zero residual degrees of freedom, dispersion cannot be estimated; in that case, we return \code{NA} for dispersion and issue a warning (unless \code{overdisp = FALSE}).
+#' 2. We set \code{disp_used = max(1, <disp_estimate>)} so that the effective dispersion is at least 1. If \code{overdisp = FALSE}, we force \code{disp_used = 1}.
+#' 3. We then call \code{\link[stats]{anova}(fit_obj, test = "Chisq", dispersion = disp_used)}.
+#'    The p‐values for each term appear in column 5 of the ANOVA table.
+#' 4. If any error occurs when computing the ANOVA, we return \code{rep(NA, length(term_labels) + 1)}.
+#'
+#' @seealso \code{\link{fit_as_glm}}, \code{\link[stats]{anova}}, \code{\link[stats]{glm}}
+#' @export
+asq_lrt <- function(
+    fit_obj,
+    overdisp = TRUE,
+    disp_param = NULL,
+    term_labels,
+    seg_id) {
+  # Number of output elements: 1 for dispersion, plus one per term
+  n_out <- length(term_labels) + 1
+  result <- rep(NA_real_, n_out)
+
+  # If fitting failed (NA), return all NAs
+  if (is.na(fit_obj)[1]) {
+    return(result)
+  }
+
+  # Determine dispersion estimate
+  if (is.null(disp_param)) {
+    disp_est <- summary(fit_obj)$dispersion
+    # If no residual DF, cannot estimate dispersion
+    if (fit_obj$df.residual == 0) {
+      disp_est <- NA_real_
+      if (overdisp) {
+        warning(paste0(
+          "Segment ", seg_id,
+          ": cannot estimate overdispersion without replicates; returning NA"
+        ))
+      }
+    }
+  } else {
+    disp_est <- disp_param
+  }
+
+  # Use at least 1 for dispersion; if overdisp = FALSE, force 1
+  disp_used <- max(1, disp_est, na.rm = TRUE)
+  if (!overdisp) {
+    disp_used <- 1
+  }
+  result[1] <- disp_used
+
+  # Run ANOVA (Chisq) with specified dispersion; catch errors
+  a_tbl <- tryCatch(
+    stats::anova(fit_obj, test = "Chisq", dispersion = disp_used),
+    error = function(e) {
+      warning(paste0(
+        "Segment ", seg_id,
+        ": ANOVA Chi-square test failed: ", e$message
+      ))
+      return(NULL)
+    }
+  )
+  if (is.null(a_tbl)) {
+    return(result)
+  }
+
+  # Extract p‐values for each term: they occupy rows 2:(1+length(term_labels)), column 5
+  # (anova table has rows: intercept, term1, term2, ..., Residuals)
+  pvals <- a_tbl[2:(1 + length(term_labels)), 5]
+  result[-1] <- pvals
+  return(result)
+}
+
+
 #' Select marker segments per cell type
 #'
 #' Filters markers by false discovery rate (FDR) and absolute delta PSI (dPSI),
