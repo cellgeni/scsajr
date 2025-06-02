@@ -150,10 +150,10 @@ filter_segments_and_samples <- function(
 #'
 #' @details
 #' The function loops over each segment, constructs a two‐column matrix \code{cbind(i, e)}, adds pseudocounts if requested, and fits a quasi‐binomial \code{\link[stats]{glm}}.
-#' If \code{return_pv = TRUE}, it calls \code{\link{asq_lrt}} to compute a likelihood‐ratio test for each term in \code{formula}.
+#' If \code{return_pv = TRUE}, it calls \code{\link{qbinom_lrt}} to compute a likelihood‐ratio test for each term in \code{formula}.
 #' Any errors or warnings during fitting are caught; segments with fitting errors return \code{NA}.
 #'
-#' @seealso \code{\link{asq_lrt}}, \code{\link[stats]{glm}}, \code{\link[plyr]{alply}}
+#' @seealso \code{\link{qbinom_lrt}}, \code{\link[stats]{glm}}, \code{\link[plyr]{alply}}
 #' @export
 fit_as_glm <- function(
     pbas,
@@ -209,7 +209,7 @@ fit_as_glm <- function(
 
       # 3. If return_pv and fit succeeded, compute p-values via LRT
       if (return_pv && !is.na(fit)[1]) {
-        fit <- asq_lrt(
+        fit <- qbinom_lrt(
           fit,
           overdisp = overdisp,
           disp_param = disp_param[i],
@@ -266,7 +266,7 @@ fit_as_glm <- function(
 #'
 #' @seealso \code{\link{fit_as_glm}}, \code{\link[stats]{anova}}, \code{\link[stats]{glm}}
 #' @export
-asq_lrt <- function(
+qbinom_lrt <- function(
     fit_obj,
     overdisp = TRUE,
     disp_param = NULL,

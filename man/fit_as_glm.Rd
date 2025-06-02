@@ -58,9 +58,9 @@ adding a pseudocount if desired. It can optionally return p‐values via a likel
 }
 \details{
 The function loops over each segment, constructs a two‐column matrix \code{cbind(i, e)}, adds pseudocounts if requested, and fits a quasi‐binomial \code{\link[stats]{glm}}.
-If \code{return_pv = TRUE}, it calls \code{\link{asq_lrt}} to compute a likelihood‐ratio test for each term in \code{formula}.
+If \code{return_pv = TRUE}, it calls \code{\link{qbinom_lrt}} to compute a likelihood‐ratio test for each term in \code{formula}.
 Any errors or warnings during fitting are caught; segments with fitting errors return \code{NA}.
 }
 \seealso{
-\code{\link{asq_lrt}}, \code{\link[stats]{glm}}, \code{\link[plyr]{alply}}
+\code{\link{qbinom_lrt}}, \code{\link[stats]{glm}}, \code{\link[plyr]{alply}}
 }
