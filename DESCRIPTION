@@ -16,6 +16,7 @@ Imports:
     IRanges,
     S4Vectors,
     SummarizedExperiment,
-    plyr
+    plyr,
+    visutils
 Suggests:
     DOSE

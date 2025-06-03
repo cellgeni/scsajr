@@ -1081,3 +1081,85 @@ add_is_coding_by_ens_gtf <- function(gtf_path, as_list) {
 }
 
 #################################
+
+
+#' Aggregate single-cell counts into pseudobulk per group
+#'
+#' Given a `SummarizedExperiment` of single-cell assays (e.g., inclusion/exclusion counts),
+#'  this function sums counts within each group (as defined by `groupby`), removes specified derivative assays,
+#'  and returns a new `SummarizedExperiment` where each column corresponds to a group-level pseudobulk.
+#'
+#' @param se A `SummarizedExperiment` where rows are features (e.g., segments) and columns are individual cells or barcodes.
+#'           Assays include `i`, `e`, `counts`, etc.
+#' @param groupby Either:
+#'   \itemize{
+#'     \item A character vector of length `ncol(se)` giving the group label for each column, or
+#'     \item One or more column names in `colData(se)`, whose values (pasted together if multiple)
+#'           define the grouping factor via `get_groupby_factor()`.
+#'   }
+#'   After grouping, columns with the same label will be summed together.
+#' @param clean_derivatives Character vector of assay names to remove before summation
+#'   (e.g., `c("psi", "cpm")`). Default `c("psi", "cpm")`.
+#'
+#' @return A new `SummarizedExperiment` with:
+#'   \describe{
+#'     \item{Assays}{Each assay from `se`, except those in `clean_derivatives`, replaced by a matrix of summed values per group.}
+#'     \item{rowRanges}{Copied from `rowRanges(se)`.}
+#'     \item{colData}{A data.frame of group-level metadata: one row per group, including any columns from `colData(se)`
+#'                      that are constant within each group, plus aggregated columns via `pseudobulk_metadata()`.}
+#'   }
+#'
+#' @details
+#' 1. Converts `groupby` into a grouping vector via `get_groupby_factor(se, groupby)`.
+#' 2. Drops any assays listed in `clean_derivatives` from `se`.
+#' 3. For each remaining assay, uses `visutils::calcColSums()` to sum counts for columns that share the same
+#'    group label.
+#' 4. Builds a metadata data.frame by calling `pseudobulk_metadata(colData(se), groupby)`, which:
+#'    \enumerate{
+#'      \item Splits `colData(se)` into sub-data.frames by group.
+#'      \item For each group, retains columns that are constant across cells and applies aggregation functions
+#'            (e.g., sum of `ncells`) for specified columns.
+#'      \item Recombines group-level rows into a single data.frame, with row names matching group labels.
+#'    }
+#' 5. Constructs a new `SummarizedExperiment` with summed assay matrices, original `rowRanges(se)`, and
+#'    the aggregated `colData` (one row per group).
+#'
+#' @seealso \code{\link{get_groupby_factor}}, \code{\link{pseudobulk_metadata}}, \code{\link[visutils]{calcColSums}}
+#' @export
+pseudobulk <- function(
+    se,
+    groupby,
+    clean_derivatives = c("psi", "cpm")) {
+  # 1. Determine grouping labels for each column
+  group_factor <- get_groupby_factor(se, groupby)
+
+  # 2. Remove specified derivative assays before summing
+  to_remove <- intersect(SummarizedExperiment::assayNames(se), clean_derivatives)
+  if (length(to_remove) > 0) {
+    for (assay_name in to_remove) {
+      SummarizedExperiment::assay(se, assay_name) <- NULL
+    }
+  }
+
+  # 3. Sum each assay by group using visutils::calcColSums
+  summed_assays <- list()
+  for (assay_name in SummarizedExperiment::assayNames(se)) {
+    mat <- SummarizedExperiment::assay(se, assay_name)
+    summed_assays[[assay_name]] <- visutils::calcColSums(mat, group_factor)
+  }
+
+  # 4. Build group-level metadata
+  meta <- as.data.frame(SummarizedExperiment::colData(se))
+  group_meta <- pseudobulk_metadata(meta, group_factor)
+  # Reorder to match the order of columns in summed_assays (rownames of each summed matrix)
+  group_meta <- group_meta[colnames(summed_assays[[1]]), , drop = FALSE]
+
+  # 5. Construct new SummarizedExperiment
+  new_se <- SummarizedExperiment::SummarizedExperiment(
+    assays = summed_assays,
+    rowRanges = SummarizedExperiment::rowRanges(se),
+    colData = group_meta
+  )
+
+  return(new_se)
+}
