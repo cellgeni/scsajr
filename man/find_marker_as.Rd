@@ -40,14 +40,14 @@ It returns p‐values and delta‐PSI matrices (segments × groups).
 \details{
 \enumerate{
 \item Builds a grouping factor via \code{get_groupby_factor(pbas, groupby)}.
-\item For each unique label \code{celltype} in that factor:
+\item For each unique label \code{group} in that factor:
 \enumerate{
-\item Creates a binary factor \code{f} where \code{f == TRUE} if sample’s group == \code{celltype}, FALSE otherwise.
+\item Creates a binary factor \code{f} where \code{f == TRUE} if sample’s group == \code{group}, FALSE otherwise.
 \item Calls \code{fit_as_glm()} with \code{formula = x ~ f} and \code{data_terms = list(f = f)}, requesting p‐values (\code{return_pv = TRUE}).
-\item Extracts the “group” p‐value column (corresponding to \code{f}) for each segment and stores in \code{pv[, celltype]}.
-\item Computes \code{dpsi[, celltype]} as \code{mean(psi[segment, f]) – mean(psi[segment, !f])}.
+\item Extracts the “group” p‐value column (corresponding to \code{f}) for each segment and stores in \code{pv[, group]}.
+\item Computes \code{dpsi[, group]} as \code{mean(psi[segment, f]) – mean(psi[segment, !f])}.
    }
-\item Adjusts each column of \code{pv} by Benjamini–Hochberg into \code{fdr[, celltype]}.
+\item Adjusts each column of \code{pv} by Benjamini–Hochberg into \code{fdr[, group]}.
 }
 }
 \seealso{

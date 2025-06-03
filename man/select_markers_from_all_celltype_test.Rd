@@ -29,11 +29,11 @@ select_markers_from_all_celltype_test(
 A data.frame with one row per segment satisfying \code{group_fdr < fdr_thr} and \code{dpsi > dpsi_thr}.
 Columns in the returned data.frame:
 \describe{
-\item{pv}{Raw p‐value from the likelihood‐ratio test for the group effect (copied from \code{all_celltype_df$group}).}
-\item{fdr}{Benjamini‐Hochberg adjusted FDR (copied from \code{all_celltype_df$group_fdr}).}
-\item{dpsi}{Delta‐PSI (copied from \code{all_celltype_df$dpsi}).}
-\item{seg_id}{Segment ID (rownames of \code{all_celltype_df}).}
-\item{group}{Group label with highest mean PSI (copied from \code{all_celltype_df$high_state}).}
+\item{\code{pv}}{Raw p‐value from the likelihood‐ratio test for the group effect (copied from \code{all_celltype_df$group}).}
+\item{\code{fdr}}{Benjamini‐Hochberg adjusted FDR (copied from \code{all_celltype_df$group_fdr}).}
+\item{\code{dpsi}}{Delta‐PSI (copied from \code{all_celltype_df$dpsi}).}
+\item{\code{seg_id}}{Segment ID (rownames of \code{all_celltype_df}).}
+\item{\code{group}}{Group label with highest mean PSI (copied from \code{all_celltype_df$high_state}).}
 }
 Row names of the returned data.frame are the segment IDs.
 }

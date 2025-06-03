@@ -583,14 +583,14 @@ test_pair_as <- function(
 #'
 #' @details
 #' 1. Builds a grouping factor via \code{get_groupby_factor(pbas, groupby)}.
-#' 2. For each unique label \code{celltype} in that factor:
+#' 2. For each unique label \code{group} in that factor:
 #'    \enumerate{
-#'      \item Creates a binary factor \code{f} where \code{f == TRUE} if sample’s group == \code{celltype}, FALSE otherwise.
+#'      \item Creates a binary factor \code{f} where \code{f == TRUE} if sample’s group == \code{group}, FALSE otherwise.
 #'      \item Calls \code{fit_as_glm()} with \code{formula = x ~ f} and \code{data_terms = list(f = f)}, requesting p‐values (\code{return_pv = TRUE}).
-#'      \item Extracts the “group” p‐value column (corresponding to \code{f}) for each segment and stores in \code{pv[, celltype]}.
-#'      \item Computes \code{dpsi[, celltype]} as \code{mean(psi[segment, f]) – mean(psi[segment, !f])}.
+#'      \item Extracts the “group” p‐value column (corresponding to \code{f}) for each segment and stores in \code{pv[, group]}.
+#'      \item Computes \code{dpsi[, group]} as \code{mean(psi[segment, f]) – mean(psi[segment, !f])}.
 #'    }
-#' 3. Adjusts each column of \code{pv} by Benjamini–Hochberg into \code{fdr[, celltype]}.
+#' 3. Adjusts each column of \code{pv} by Benjamini–Hochberg into \code{fdr[, group]}.
 #'
 #' @seealso \code{\link{fit_as_glm}}, \code{\link{get_groupby_factor}}, \code{\link{calc_psi}}
 #' @export
@@ -616,12 +616,12 @@ find_marker_as <- function(
   )
 
   # 3. For each group, perform one‐vs‐rest test
-  for (celltype in unique_groups) {
+  for (group in unique_groups) {
     if (verbose) {
-      message("Testing group: ", celltype)
+      message("Testing group: ", group)
     }
     # Binary factor: TRUE if sample belongs to this group
-    f <- group_factor == celltype
+    f <- group_factor == group
 
     # Fit GLM per segment; return a data.frame with columns: overdispersion and 'group' p‐value
     glm_res <- fit_as_glm(
@@ -634,15 +634,15 @@ find_marker_as <- function(
     # glm_res[data.frame]: rownames = segment IDs, col 'group' = p‐value
 
     # Store raw p‐values for this group
-    pv_mat[, celltype] <- glm_res[, "group"]
+    pv_mat[, group] <- glm_res[, "group"]
 
-    # Compute dpsi: for each segment, mean PSI in 'celltype' minus mean PSI in others
+    # Compute dpsi: for each segment, mean PSI in 'group' minus mean PSI in others
     psi_vals <- SummarizedExperiment::assay(pbas, "psi")
 
     # For rows with all-NA in either subset, result is NA automatically
     mean_ct <- rowMeans(psi_vals[, f, drop = FALSE], na.rm = TRUE)
     mean_other <- rowMeans(psi_vals[, !f, drop = FALSE], na.rm = TRUE)
-    dpsi_mat[, celltype] <- mean_ct - mean_other
+    dpsi_mat[, group] <- mean_ct - mean_other
   }
 
   # 4. Adjust p‐values column‐wise (BH)
@@ -678,11 +678,11 @@ find_marker_as <- function(
 #' @return A data.frame with one row per segment satisfying \code{group_fdr < fdr_thr} and \code{dpsi > dpsi_thr}.
 #'   Columns in the returned data.frame:
 #'   \describe{
-#'     \item{pv}{Raw p‐value from the likelihood‐ratio test for the group effect (copied from \code{all_celltype_df$group}).}
-#'     \item{fdr}{Benjamini‐Hochberg adjusted FDR (copied from \code{all_celltype_df$group_fdr}).}
-#'     \item{dpsi}{Delta‐PSI (copied from \code{all_celltype_df$dpsi}).}
-#'     \item{seg_id}{Segment ID (rownames of \code{all_celltype_df}).}
-#'     \item{group}{Group label with highest mean PSI (copied from \code{all_celltype_df$high_state}).}
+#'     \item{\code{pv}}{Raw p‐value from the likelihood‐ratio test for the group effect (copied from \code{all_celltype_df$group}).}
+#'     \item{\code{fdr}}{Benjamini‐Hochberg adjusted FDR (copied from \code{all_celltype_df$group_fdr}).}
+#'     \item{\code{dpsi}}{Delta‐PSI (copied from \code{all_celltype_df$dpsi}).}
+#'     \item{\code{seg_id}}{Segment ID (rownames of \code{all_celltype_df}).}
+#'     \item{\code{group}}{Group label with highest mean PSI (copied from \code{all_celltype_df$high_state}).}
 #'   }
 #'   Row names of the returned data.frame are the segment IDs.
 #'
@@ -715,21 +715,56 @@ select_markers_from_all_celltype_test <- function(
 }
 
 
-#' Select marker segments per cell type
+#' Select top marker segments per group (celltype)
 #'
-#' Filters markers by false discovery rate (FDR) and absolute delta PSI (dPSI),
-#' then selects the top n markers per cell type, and removing duplicates
-#' (keeping only the strongest marker per segment across all cell_type).
+#' From a list of per‐segment test results (as returned by \code{find_marker_as()}),
+#'  this function selects up to \code{n} top segments per group
+#'  whose FDR is below a threshold and whose absolute delta‐PSI exceeds a threshold.
+#' Optionally, it removes duplicate segments so that each segment appears only once
+#'  (assigned to the group where it has the largest |dpsi|).
 #'
-#' @param segment_stats A list containing numeric matrices `pv`, `fdr`, and `dpsi`
-#'                      with rows = segments and cols = cell types.
+#' @param markers A list containing numeric matrics \code{pv}, \code{fdr}, and \code{dpsi},
+#'   each a matrix with rows = segments and columns = group labels (as returned by \code{find_marker_as()}).
+#'   \describe{
+#'     \item{\code{markers$pv}}{Matrix of raw p‐values, dimensions: ∣segments∣ × ∣groups∣.}
+#'     \item{\code{markers$fdr}}{Matrix of Benjamini‐Hochberg adjusted FDR p‐values, same dimensions.}
+#'     \item{\code{markers$dpsi}}{Matrix of delta‐PSI (mean PSI(group) – mean PSI(others)), same dimensions.}
+#'   }
 #' @param n Integer: maximum number of markers to return per cell type (default: 5).
 #' @param fdr_thr Numeric: false discovery rate cutoff (default: 0.05).
 #' @param dpsi_thr Numeric: minimum absolute delta PSI cutoff (default: 0.1).
-#' @param clean_duplicates Logical: if TRUE, keep only one entry per segment
-#'                         (the one with highest |dpsi|) across all cell types (default: TRUE).
-#' @return A data.frame with columns `pv`, `fdr`, `dpsi`, `seg_id`, and `group`(cell type),
-#'         sorted by decreasing |dpsi|.
+#' @param clean_duplicates Logical: if \code{TRUE}, keep only one entry per segment
+#'                         (the one with highest |dpsi|) across all cell types (default: \code{TRUE}).
+#'
+#' @return A data.frame with selected marker segments. Columns:
+#'   \describe{
+#'     \item{\code{pv}}{Raw p‐value from the likelihood‐ratio test for the group effect in the selected group.}
+#'     \item{\code{fdr}}{Benjamini‐Hochberg adjusted FDR value for the segment in the selected group.}
+#'     \item{\code{dpsi}}{Delta‐PSI (signed) for the segment in the selected group.}
+#'     \item{\code{seg_id}}{Segment identifier (rownames of \code{markers$pv}).}
+#'     \item{\code{group}}{Group label for which this segment is selected.}
+#'   }
+#'   Rows are ordered by descending |dpsi| across all selected segments.
+#'
+#' @details
+#' For each group (column) in \code{markers$fdr}, the function:
+#' \enumerate{
+#'   \item Identifies segments \code{seg} satisfying
+#'         \code{markers$fdr[seg, group] <= fdr_thr} and
+#'         \code{|markers$dpsi[seg, group]| >= dpsi_thr}.
+#'   \item If at least one segment passes, constructs a temporary data.frame \code{t} containing
+#'         \code{pv = markers$pv[seg, group]},
+#'         \code{fdr = markers$fdr[seg, group]},
+#'         \code{dpsi = markers$dpsi[seg, group]},
+#'         \code{seg_id = seg},
+#'         \code{group = group}.
+#'   \item Selects up to \code{n} rows from \code{t}, ordering by \code{abs(dpsi)} in descending order.
+#'   \item Appends these rows to an aggregate \code{res} data.frame.
+#' }
+#' If \code{clean_duplicates = TRUE}, it then splits \code{res} by \code{seg_id} and retains only the row
+#'  where \code{|dpsi|} is maximal across groups, removing duplicates.
+#' Finally, it re‐orders \code{res} by \code{abs(dpsi)} in descending order and returns it.
+#'
 #' @examples
 #' # Load example data
 #' data(pbasf)
@@ -737,51 +772,76 @@ select_markers_from_all_celltype_test <- function(
 #' # Select top 10 markers with stricter thresholds:
 #' df <- select_markers(pbasf@metadata$markers, n = 10, fdr_thr = 0.01, dpsi_thr = 0.2)
 #' head(df)
+#'
+#' @seealso \code{\link{find_marker_as}}, \code{\link{test_all_groups_as}}, \code{\link{test_pair_as}}
 #' @export
-select_markers <- function(segment_stats, n = 5, fdr_thr = 0.05, dpsi_thr = 0.1, clean_duplicates = TRUE) {
-  # dataframe to store selected markers
-  selected <- NULL
+select_markers <- function(
+    markers,
+    n = 5,
+    fdr_thr = 0.05,
+    dpsi_thr = 0.1,
+    clean_duplicates = TRUE) {
+  # Initialize an empty result
+  result <- NULL
 
-  # Loop over each cell_type (column in the FDR matrix)
-  for (cell_type in colnames(segment_stats$fdr)) {
-    # Filter segments based on FDR and dPSI thresholds
-    is_significant <-
-      (segment_stats$fdr[, cell_type] <= fdr_thr) &
-        (abs(segment_stats$dpsi[, cell_type]) >= dpsi_thr)
-    is_significant[is.na(is_significant)] <- FALSE # Treat NA values as non-significant
+  # Iterate over each group (celltype) (column name) in the fdr matrix
+  for (group in colnames(markers$fdr)) {
+    # 1. Identify segments passing both FDR and |dpsi| thresholds
+    pass_fdr <- markers$fdr[, group] <= fdr_thr
+    pass_dpsi <- abs(markers$dpsi[, group]) >= dpsi_thr
+    keep_idx <- which(pass_fdr & pass_dpsi)
 
-    # Skip if no segments pass for this cell_type
-    if (!any(is_significant)) next
+    # Replace NA flags with FALSE
+    keep_idx <- keep_idx[!is.na(keep_idx)]
 
-    # Build dataframe of all significant segments for this cell_type
-    top <- data.frame(
-      pv = segment_stats$pv[is_significant, cell_type],
-      fdr = segment_stats$fdr[is_significant, cell_type],
-      dpsi = segment_stats$dpsi[is_significant, cell_type],
-      seg_id = rownames(segment_stats$pv)[is_significant],
-      group = cell_type
+    # If no segments pass, skip to next group
+    if (length(keep_idx) == 0) {
+      next
+    }
+
+    # 2. Build a temporary data.frame of candidate segments for this group
+    temp_df <- data.frame(
+      pv = markers$pv[keep_idx, group],
+      fdr = markers$fdr[keep_idx, group],
+      dpsi = markers$dpsi[keep_idx, group],
+      seg_id = rownames(markers$pv)[keep_idx],
+      group = group,
+      stringsAsFactors = FALSE
     )
 
-    # Order by decending |dPSI| and select top n segments
-    keep_idx <- order(abs(top$dpsi), decreasing = TRUE)[seq_len(min(n, nrow(top)))]
-    top <- top[keep_idx, ]
+    # 3. Order by descending |dpsi| and take up to 'n' rows
+    order_idx <- order(abs(temp_df$dpsi), decreasing = TRUE)
+    top_n_idx <- utils::head(order_idx, n)
+    temp_sel <- temp_df[top_n_idx, , drop = FALSE]
 
-    # Append to output dataframe
-    selected <- rbind(selected, top)
+    # 4. Append to the cumulative result
+    result <- if (is.null(result)) {
+      temp_sel
+    } else {
+      rbind(result, temp_sel)
+    }
   }
 
-  # Reset row name
-  rownames(selected) <- NULL
+  # Reset row names of the aggregated result
+  rownames(result) <- NULL
 
-  # (Optional) remove duplicate segment IDs (keep the highest |dpsi|)
-  if (clean_duplicates) {
-    selected <- lapply(split(selected, selected$seg_id), function(x) x[order(abs(x$dpsi), decreasing = TRUE)[1], ])
-    selected <- do.call(rbind, selected)
+  # 5. If clean_duplicates, ensure each seg_id appears only once
+  if (clean_duplicates && nrow(result) > 0) {
+    # Split by seg_id; within each group, keep row with largest |dpsi|
+    by_seg <- split(result, result$seg_id)
+    cleaned_list <- lapply(by_seg, function(df_seg) {
+      # Order rows for this segment by descending |dpsi|
+      idx <- order(abs(df_seg$dpsi), decreasing = TRUE)
+      df_seg[idx[1], , drop = FALSE]
+    })
+    result <- do.call(rbind, cleaned_list)
+    rownames(result) <- NULL
   }
 
-  # Final sort by descending |dpsi|
-  selected <- selected[order(abs(selected$dpsi), decreasing = TRUE), ]
+  # 6. Finally, order all rows by descending |dpsi|
+  if (nrow(result) > 0) {
+    result <- result[order(abs(result$dpsi), decreasing = TRUE), , drop = FALSE]
+  }
 
-  # Return dataframe
-  selected
+  return(result)
 }

@@ -2,10 +2,10 @@
 % Please edit documentation in R/scsajr.R
 \name{select_markers}
 \alias{select_markers}
-\title{Select marker segments per cell type}
+\title{Select top marker segments per group (celltype)}
 \usage{
 select_markers(
-  segment_stats,
+  markers,
   n = 5,
   fdr_thr = 0.05,
   dpsi_thr = 0.1,
@@ -13,8 +13,13 @@ select_markers(
 )
 }
 \arguments{
-\item{segment_stats}{A list containing numeric matrices \code{pv}, \code{fdr}, and \code{dpsi}
-with rows = segments and cols = cell types.}
+\item{markers}{A list containing numeric matrics \code{pv}, \code{fdr}, and \code{dpsi},
+each a matrix with rows = segments and columns = group labels (as returned by \code{find_marker_as()}).
+\describe{
+\item{\code{markers$pv}}{Matrix of raw p‐values, dimensions: ∣segments∣ × ∣groups∣.}
+\item{\code{markers$fdr}}{Matrix of Benjamini‐Hochberg adjusted FDR p‐values, same dimensions.}
+\item{\code{markers$dpsi}}{Matrix of delta‐PSI (mean PSI(group) – mean PSI(others)), same dimensions.}
+}}
 
 \item{n}{Integer: maximum number of markers to return per cell type (default: 5).}
 
@@ -22,17 +27,45 @@ with rows = segments and cols = cell types.}
 
 \item{dpsi_thr}{Numeric: minimum absolute delta PSI cutoff (default: 0.1).}
 
-\item{clean_duplicates}{Logical: if TRUE, keep only one entry per segment
-(the one with highest |dpsi|) across all cell types (default: TRUE).}
+\item{clean_duplicates}{Logical: if \code{TRUE}, keep only one entry per segment
+(the one with highest |dpsi|) across all cell types (default: \code{TRUE}).}
 }
 \value{
-A data.frame with columns \code{pv}, \code{fdr}, \code{dpsi}, \code{seg_id}, and \code{group}(cell type),
-sorted by decreasing |dpsi|.
+A data.frame with selected marker segments. Columns:
+\describe{
+\item{\code{pv}}{Raw p‐value from the likelihood‐ratio test for the group effect in the selected group.}
+\item{\code{fdr}}{Benjamini‐Hochberg adjusted FDR value for the segment in the selected group.}
+\item{\code{dpsi}}{Delta‐PSI (signed) for the segment in the selected group.}
+\item{\code{seg_id}}{Segment identifier (rownames of \code{markers$pv}).}
+\item{\code{group}}{Group label for which this segment is selected.}
+}
+Rows are ordered by descending |dpsi| across all selected segments.
 }
 \description{
-Filters markers by false discovery rate (FDR) and absolute delta PSI (dPSI),
-then selects the top n markers per cell type, and removing duplicates
-(keeping only the strongest marker per segment across all cell_type).
+From a list of per‐segment test results (as returned by \code{find_marker_as()}),
+this function selects up to \code{n} top segments per group
+whose FDR is below a threshold and whose absolute delta‐PSI exceeds a threshold.
+Optionally, it removes duplicate segments so that each segment appears only once
+(assigned to the group where it has the largest |dpsi|).
+}
+\details{
+For each group (column) in \code{markers$fdr}, the function:
+\enumerate{
+\item Identifies segments \code{seg} satisfying
+\code{markers$fdr[seg, group] <= fdr_thr} and
+\code{|markers$dpsi[seg, group]| >= dpsi_thr}.
+\item If at least one segment passes, constructs a temporary data.frame \code{t} containing
+\code{pv = markers$pv[seg, group]},
+\code{fdr = markers$fdr[seg, group]},
+\code{dpsi = markers$dpsi[seg, group]},
+\code{seg_id = seg},
+\code{group = group}.
+\item Selects up to \code{n} rows from \code{t}, ordering by \code{abs(dpsi)} in descending order.
+\item Appends these rows to an aggregate \code{res} data.frame.
+}
+If \code{clean_duplicates = TRUE}, it then splits \code{res} by \code{seg_id} and retains only the row
+where \code{|dpsi|} is maximal across groups, removing duplicates.
+Finally, it re‐orders \code{res} by \code{abs(dpsi)} in descending order and returns it.
 }
 \examples{
 # Load example data
@@ -41,4 +74,8 @@ data(pbasf)
 # Select top 10 markers with stricter thresholds:
 df <- select_markers(pbasf@metadata$markers, n = 10, fdr_thr = 0.01, dpsi_thr = 0.2)
 head(df)
+
+}
+\seealso{
+\code{\link{find_marker_as}}, \code{\link{test_all_groups_as}}, \code{\link{test_pair_as}}
 }
