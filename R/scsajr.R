@@ -1210,3 +1210,47 @@ calc_psi <- function(se, min_cov = 10) {
 
   return(as.matrix(psi_mat))
 }
+
+
+#' Calculate counts per million (CPM) per gene/feature
+#'
+#' Given a `SummarizedExperiment` containing raw count data (assay named `counts`),
+#'   this function computes counts per million for each feature across samples: `CPM = (counts / library_size) * 1e6`
+#' where `library_size` is the total sum of counts in each sample (column).
+#'
+#' @param se A `SummarizedExperiment` with an assay named `counts` (integer or numeric matrix).
+#'   Rows are features (e.g., genes); columns are samples.
+#'
+#' @return A numeric matrix of the same dimensions as the `counts` assay, where each entry is the counts per million for that feature and sample.
+#'   If `counts` assay is missing, returns `NULL`.
+#'
+#' @examples
+#' \dontrun{
+#' # Assume 'se_counts' is a SummarizedExperiment with assay 'counts'
+#' cpm_mat <- calc_cpm(se_counts)
+#' head(cpm_mat)
+#' }
+#'
+#' @seealso \code{\link{pseudobulk}}
+#' @export
+calc_cpm <- function(se) {
+  # Verify that 'counts' assay exists
+  if (!("counts" %in% SummarizedExperiment::assayNames(se))) {
+    warning("Assay 'counts' not found in the SummarizedExperiment; returning NULL.")
+    return(NULL)
+  }
+
+  # Extract raw counts matrix
+  counts_mat <- SummarizedExperiment::assay(se, "counts")
+
+  # Compute library size per sample (column sums)
+  lib_sizes <- colSums(counts_mat, na.rm = TRUE)
+
+  # Avoid division by zero: if any lib_size == 0, set to NA to propagate NA in CPM
+  lib_sizes[lib_sizes == 0] <- NA_real_
+
+  # Compute CPM: (counts / library_size) * 1e6
+  cpm_mat <- sweep(counts_mat, 2, lib_sizes, FUN = "/") * 1e6
+
+  return(as.matrix(cpm_mat))
+}
