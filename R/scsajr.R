@@ -1163,3 +1163,50 @@ pseudobulk <- function(
 
   return(new_se)
 }
+
+
+#' Calculate percent spliced‐in (PSI) per segment
+#'
+#' Given a `SummarizedExperiment` containing inclusion (`i`) and exclusion (`e`) counts,
+#'  this function computes, for each segment and sample, the percent spliced‐in: `PSI = i / (i + e)`
+#' If the total counts (`i + e`) for a segment in a sample are below `min_cov`, that PSI is set to `NA`.
+#'
+#' @param se A `SummarizedExperiment` with assays named `i` (inclusion counts) and `e` (exclusion counts).
+#'   Rows are segments; columns are pseudobulk samples.
+#' @param min_cov Integer scalar; minimum total junction coverage (`i + e`) required to compute a valid PSI.
+#'   For any `i + e < min_cov`, the PSI is set to `NA`. Default is `10`.
+#'
+#' @return A numeric matrix of dimensions `nrow(se)` × `ncol(se)` where each entry is the PSI value
+#'   for that segment and sample, or `NA` if coverage is insufficient.
+#'
+#' @examples
+#' \dontrun{
+#' # Assume 'pseudobulk_se' is a SummarizedExperiment with assays 'i' and 'e':
+#' psi_mat <- calc_psi(pseudobulk_se, min_cov = 10)
+#' head(psi_mat)
+#' }
+#'
+#' @seealso \code{\link{pseudobulk}}, \code{\link{calc_cpm}}
+#' @export
+calc_psi <- function(se, min_cov = 10) {
+  # Verify that both 'i' and 'e' assays exist
+  if (!all(c("i", "e") %in% SummarizedExperiment::assayNames(se))) {
+    warning("Assays 'i' and/or 'e' not found in the SummarizedExperiment; returning NULL.")
+    return(NULL)
+  }
+
+  # Extract inclusion and exclusion count matrices
+  inc_mat <- SummarizedExperiment::assay(se, "i")
+  exc_mat <- SummarizedExperiment::assay(se, "e")
+
+  # Compute total counts per segment × sample
+  total_mat <- inc_mat + exc_mat
+
+  # Initialize PSI matrix
+  psi_mat <- inc_mat / total_mat
+
+  # Where total < min_cov, set PSI to NA
+  psi_mat[total_mat < min_cov] <- NA_real_
+
+  return(as.matrix(psi_mat))
+}
