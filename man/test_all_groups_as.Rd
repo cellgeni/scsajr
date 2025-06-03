@@ -9,7 +9,7 @@ test_all_groups_as(pbas, groupby, parallel = FALSE)
 \arguments{
 \item{pbas}{A \code{SummarizedExperiment} where each row is a segment and each column is a pseudobulk.
 Must contain assays named “i” (inclusion) and “e” (exclusion).
-Rows correspond to segments; columns correspond to samples/pseudobulks.}
+Rows correspond to segment IDs; columns correspond to samples/pseudobulks.}
 
 \item{groupby}{Either:
 \itemize{
@@ -21,7 +21,7 @@ See \code{\link{get_groupby_factor}} for details.}
 \item{parallel}{Logical; if \code{TRUE}, fit per‐segment GLMs in parallel (requires a registered \code{plyr} backend). Default \code{FALSE}.}
 }
 \value{
-A data.frame with one row per segment (rownames = \code{rownames(pbas)}), containing columns:
+A data.frame with one row per segment (rownames = \code{rownames(pbas)} (segment IDs)), containing columns:
 \describe{
 \item{overdispersion}{Estimated dispersion from each segment’s GLM.}
 \item{group}{Raw p‐value from the likelihood‐ratio test for the \code{group} term.}

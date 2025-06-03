@@ -404,7 +404,7 @@ get_groupby_factor <- function(x, groupby, sep = DELIMETER) {
 #'
 #' @param pbas A \code{SummarizedExperiment} where each row is a segment and each column is a pseudobulk.
 #'   Must contain assays named “i” (inclusion) and “e” (exclusion).
-#'   Rows correspond to segments; columns correspond to samples/pseudobulks.
+#'   Rows correspond to segment IDs; columns correspond to samples/pseudobulks.
 #' @param groupby Either:
 #'   \itemize{
 #'     \item A vector of length \code{ncol(pbas)} that directly gives a group label for each column, or
@@ -413,7 +413,7 @@ get_groupby_factor <- function(x, groupby, sep = DELIMETER) {
 #'   See \code{\link{get_groupby_factor}} for details.
 #' @param parallel Logical; if \code{TRUE}, fit per‐segment GLMs in parallel (requires a registered \code{plyr} backend). Default \code{FALSE}.
 #'
-#' @return A data.frame with one row per segment (rownames = \code{rownames(pbas)}), containing columns:
+#' @return A data.frame with one row per segment (rownames = \code{rownames(pbas)} (segment IDs)), containing columns:
 #'   \describe{
 #'     \item{overdispersion}{Estimated dispersion from each segment’s GLM.}
 #'     \item{group}{Raw p‐value from the likelihood‐ratio test for the \code{group} term.}
@@ -654,6 +654,64 @@ find_marker_as <- function(
     fdr = fdr_mat,
     dpsi = dpsi_mat
   ))
+}
+
+
+#' Select markers from all‐celltype test results
+#'
+#' From a data.frame of per‐segment results comparing all groups simultaneously (e.g., output of \code{test_all_groups_as()}),
+#'   this function selects only those segments that pass both a group‐level FDR threshold and a minimum delta‐PSI threshold.
+#' It returns a data.frame with one row per qualifying segment.
+#'
+#' @param all_celltype_df A data.frame (rownames = segment IDs), containing columns:
+#'   \describe{
+#'     \item{overdispersion}{Estimated dispersion from each segment’s GLM.}
+#'     \item{group}{Raw p‐value from the likelihood‐ratio test for the \code{group} term.}
+#'     \item{group_fdr}{Benjamini‐Hochberg adjusted FDR (across all segments).}
+#'     \item{low_state}{Group label with lowest mean PSI (from \code{get_dpsi()}).}
+#'     \item{high_state}{Group label with highest mean PSI.}
+#'     \item{dpsi}{Difference in mean PSI between \code{high_state} and \code{low_state}.}
+#'   }
+#' @param fdr_thr Numeric: false discovery rate cutoff (default: 0.05).
+#' @param dpsi_thr Numeric: minimum absolute delta PSI cutoff (default: 0.1).
+#'
+#' @return A data.frame with one row per segment satisfying \code{group_fdr < fdr_thr} and \code{dpsi > dpsi_thr}.
+#'   Columns in the returned data.frame:
+#'   \describe{
+#'     \item{pv}{Raw p‐value from the likelihood‐ratio test for the group effect (copied from \code{all_celltype_df$group}).}
+#'     \item{fdr}{Benjamini‐Hochberg adjusted FDR (copied from \code{all_celltype_df$group_fdr}).}
+#'     \item{dpsi}{Delta‐PSI (copied from \code{all_celltype_df$dpsi}).}
+#'     \item{seg_id}{Segment ID (rownames of \code{all_celltype_df}).}
+#'     \item{group}{Group label with highest mean PSI (copied from \code{all_celltype_df$high_state}).}
+#'   }
+#'   Row names of the returned data.frame are the segment IDs.
+#'
+#' @examples
+#' \dontrun{
+#' # Assume 'all_test' is output of test_all_groups_as(), with rownames = segment IDs.
+#' sig_df <- select_markers_from_all_celltype_test(all_test, fdr_thr = 0.05, dpsi_thr = 0.2)
+#' }
+#'
+#' @export
+select_markers_from_all_celltype_test <- function(
+    all_celltype_df,
+    fdr_thr = 0.05,
+    dpsi_thr = 0.1) {
+  # Identify segments passing both thresholds
+  keep <- (all_celltype_df$group_fdr < fdr_thr) & (all_celltype_df$dpsi > dpsi_thr)
+  subset_df <- all_celltype_df[keep, , drop = FALSE]
+
+  # Build result data.frame
+  result <- data.frame(
+    pv = subset_df$group,
+    fdr = subset_df$group_fdr,
+    dpsi = subset_df$dpsi,
+    seg_id = rownames(subset_df),
+    group = subset_df$high_state,
+    row.names = rownames(subset_df),
+    stringsAsFactors = FALSE
+  )
+  return(result)
 }
 
 
