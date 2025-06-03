@@ -1,37 +1,40 @@
-options(error = function(e) quit("no", 1))
+#!/usr/bin/env Rscript
 
-DELIMETER <- "$"
+# Need to add package description
+# Need to figureout how to keep links in the Roxygen documentation
+
+DELIMITER <- "$"
 
 
 #' Filter segments and samples based on coverage and group criteria
 #'
-#' This function takes a \code{SummarizedExperiment} containing alternative splicing data
+#' This function takes a `SummarizedExperiment` containing alternative splicing data
 #' (with assays “i” for inclusion counts and “e” for exclusion counts), and filters out:
-#'   1. pseudobulk samples with fewer than \code{sample_min_ncells} cells,
-#'   2. cell‐type groups with fewer than \code{celltype_min_samples} samples,
+#'   1. pseudobulk samples with fewer than `sample_min_ncells` cells,
+#'   2. cell‐type groups with fewer than `celltype_min_samples` samples,
 #'   3. segments (rows) that do not meet minimum coverage across pseudobulks,
 #'   4. segments with low variability (standard deviation of PSI).
 #'
-#' @param pbas A \code{SummarizedExperiment} where each row is a segment and each column is a pseudobulk.
+#' @param pbas A `SummarizedExperiment` where each row is a segment and each column is a pseudobulk.
 #'   Must contain assays named “i” (inclusion) and “e” (exclusion).
 #'   Rows correspond to segments; columns correspond to samples/pseudobulks.
-#' @param sample_filter Logical vector (length = number of columns in \code{pbas}) indicating which samples to retain initially.
-#'   Defaults to \code{TRUE} for all samples.
-#' @param sites Character vector of splice‐site patterns to keep (e.g., \code{c("ad", "aa", "dd")}). Only segments whose \code{rowData(pbas)$sites} is in this set will be retained.
-#' @param min_cov Minimum total junction coverage (\code{i + e}) for a pseudobulk to count toward segment inclusion. Default 10.
+#' @param sample_filter Logical vector (length = number of columns in `pbas`) indicating which samples to retain initially.
+#'   Defaults to `TRUE` for all samples.
+#' @param sites Character vector of splice‐site patterns to keep (e.g., `c("ad", "aa", "dd")`). Only segments whose `rowData(pbas)$sites` is in this set will be retained.
+#' @param min_cov Minimum total junction coverage (`i + e`) for a pseudobulk to count toward segment inclusion. Default 10.
 #' @param sample_min_ncells Minimum number of cells per pseudobulk; pseudobulk samples with fewer cells are filtered out. Default 20.
-#' @param celltype_min_samples Minimum number of pseudobulk samples per group (as defined by \code{groupby}) to keep that group. Default 2.
-#' @param seg_min_samples The absolute minimum number of pseudobulks (after filtering by \code{min_cov}) that a segment must be observed in. Default 4.
-#' @param seg_min_samples_fraq Minimum fraction of total pseudobulk samples that must meet \code{min_cov} for a segment to be retained. Default 0.2.
-#'   The effective minimum samples per segment is \code{max(seg_min_samples, ncol(pbas) * seg_min_samples_fraq)}.
+#' @param celltype_min_samples Minimum number of pseudobulk samples per group (as defined by `groupby`) to keep that group. Default 2.
+#' @param seg_min_samples The absolute minimum number of pseudobulks (after filtering by `min_cov`) that a segment must be observed in. Default 4.
+#' @param seg_min_samples_fraq Minimum fraction of total pseudobulk samples that must meet `min_cov` for a segment to be retained. Default 0.2.
+#'   The effective minimum samples per segment is `max(seg_min_samples, ncol(pbas) * seg_min_samples_fraq)`.
 #' @param seg_min_sd Minimum standard deviation of PSI (percent spliced‐in) across pseudobulks for a segment to be retained. Default 0.1.
-#' @param groupby Either (a) a character vector of length \code{ncol(pbas)} giving an existing grouping factor for each column, or
-#'   (b) a character scalar or vector of column names in \code{colData(pbas)} whose pasted‐together values define the grouping factor.
-#'   See \code{\link{get_groupby_factor}} for details.
+#' @param groupby Either (a) a character vector of length `ncol(pbas)` giving an existing grouping factor for each column, or
+#'   (b) a character scalar or vector of column names in `colData(pbas)` whose pasted‐together values define the grouping factor.
+#'   See `\link{get_groupby_factor}` for details.
 #'
-#' @return A filtered \code{SummarizedExperiment}, containing only those pseudobulks and segments that satisfy all criteria.
+#' @return A filtered `SummarizedExperiment`, containing only those pseudobulks and segments that satisfy all criteria.
 #'   The returned object will always have assays “i”, “e” converted to dense matrices, and will include a “psi” assay (percent spliced‐in) for each retained segment/samples.
-#'   The \code{rowData} will also contain a column “nna” (number of pseudobulks with \code{i+e >= min_cov}) and “sd” (standard deviation of PSI).
+#'   The `rowData` will also contain a column “nna” (number of pseudobulks with `i+e >= min_cov`) and “sd” (standard deviation of PSI).
 #'
 #' @examples
 #' \dontrun{
@@ -63,7 +66,7 @@ filter_segments_and_samples <- function(
     seg_min_sd = 0.1,
     groupby = "celltype") {
   ## 1. Filter out pseudobulk samples with fewer than sample_min_ncells cells
-  # Fleter pseudobulk samples with fewer cells
+  # Filter pseudobulk samples with fewer cells
   sample_filter <- sample_filter & (SummarizedExperiment::colData(pbas)$ncells >= sample_min_ncells)
 
   # Determine how many samples remain in each group (celltype)
@@ -76,7 +79,7 @@ filter_segments_and_samples <- function(
   pbas <- pbas[, sample_filter] # Subset the SummarizedExperiment columns (samples)
 
 
-  ## 2. Filter out cell‐type groups with fewer than celltype_min_samples} samples
+  ## 2. Filter out cell‐type groups with fewer than celltype_min_samples samples
   # Keep only rows where rowData(pbas)$sites is in the specified 'sites' vector
   seg_sel <- SummarizedExperiment::rowData(pbas)$sites %in% sites
   pbas <- pbas[seg_sel, ]
@@ -119,41 +122,41 @@ filter_segments_and_samples <- function(
 
 #' Fit a quasi‐binomial GLM for alternative splicing per segment
 #'
-#' For each segment (row) in a \code{SummarizedExperiment} with assays “i” (inclusion counts) and “e” (exclusion counts),
-#' this function fits a quasi‐binomial generalized linear model of the form \code{i / (i + e) ~ predictors},
+#' For each segment (row) in a `SummarizedExperiment` with assays “i” (inclusion counts) and “e” (exclusion counts),
+#' this function fits a quasi‐binomial generalized linear model of the form `i / (i + e) ~ predictors`,
 #' adding a pseudocount if desired. It can optionally return p‐values via a likelihood‐ratio test.
 #'
-#' @param pbas A \code{SummarizedExperiment} where each row is a segment and each column is a pseudobulk.
+#' @param pbas A `SummarizedExperiment` where each row is a segment and each column is a pseudobulk.
 #'   Must contain assays named “i” (inclusion) and “e” (exclusion).
 #'   Rows correspond to segments; columns correspond to samples/pseudobulks.
-#' @param formula An \code{\link[stats]{formula}} object specifying the model, e.g., \code{i ~ group}.
+#' @param formula An `\link[stats]{formula}` object specifying the model, e.g., `i ~ group`.
 #'   Internally, the function treats “i” and “e” as a two‐column response.
-#' @param data_terms A named list of covariates: data.frame columns referenced in \code{formula}.
-#'   For example, if \code{formula = i ~ group}, then \code{data_terms = list(group = group_factor)} where \code{group_factor} is a vector of length \code{ncol(pbas)}.
+#' @param data_terms A named list of covariates: data.frame columns referenced in `formula`.
+#'   For example, if `formula = i ~ group`, then `data_terms = list(group = group_factor)` where `group_factor` is a vector of length `ncol(pbas)`.
 #' @param pseudocount A numeric fraction of each count total to add to both “i” and “e”, expressed as a fraction of the total counts. Default 0 (no pseudocount).
-#' @param parallel Logical; if \code{TRUE}, uses \code{\link[plyr]{alply}(…, .parallel = TRUE)} to fit models in parallel (requires registered backend). Default \code{FALSE}.
-#' @param progress Character string passed to \code{.progress} in \code{\link[plyr]{alply}}. Default \code{"none"}.
-#' @param return_pv Logical; if \code{TRUE}, perform a quasi‐likelihood ratio test per segment to return p‐values for each term in \code{formula}.
-#'   Otherwise, return fitted \code{\link[stats]{glm}} objects. Default \code{FALSE}.
-#' @param overdisp Logical; if \code{TRUE}, account for overdispersion when computing test statistics. Default \code{TRUE}.
-#' @param disp_param Optional numeric vector of length \code{nrow(pbas)} providing dispersion parameters per segment.
-#'   If \code{NULL}, dispersion is estimated from each model’s residuals.
+#' @param parallel Logical; if `TRUE`, uses `\link[plyr]{alply}(…, .parallel = TRUE)` to fit models in parallel (requires registered backend). Default `FALSE`.
+#' @param progress Character string passed to `.progress` in `\link[plyr]{alply}`. Default `"none"`.
+#' @param return_pv Logical; if `TRUE`, perform a quasi‐likelihood ratio test per segment to return p‐values for each term in `formula`.
+#'   Otherwise, return fitted `\link[stats]{glm}` objects. Default `FALSE`.
+#' @param overdisp Logical; if `TRUE`, account for overdispersion when computing test statistics. Default `TRUE`.
+#' @param disp_param Optional numeric vector of length `nrow(pbas)` providing dispersion parameters per segment.
+#'   If `NULL`, dispersion is estimated from each model’s residuals.
 #'
-#' @return If \code{return_pv = FALSE}, a named list of length \code{nrow(pbas)} of fitted \code{glm} objects
-#'   (or \code{NA} for segments where fitting failed). Names correspond to \code{rownames(pbas)}.
-#'   If \code{return_pv = TRUE}, a data.frame with one row per segment, columns:
+#' @return If `return_pv = FALSE`, a named list of length `nrow(pbas)` of fitted `glm` objects
+#'   (or `NA` for segments where fitting failed). Names correspond to `rownames(pbas)`.
+#'   If `return_pv = TRUE`, a data.frame with one row per segment, columns:
 #'   \describe{
-#'     \item{overdispersion}{Estimated dispersion (or provided \code{disp_param}).}
-#'     \item{<term>}{Likelihood‐ratio p‐value for each term in \code{formula}.}
+#'     \item{overdispersion}{Estimated dispersion (or provided `disp_param`).}
+#'     \item{<term>}{Likelihood‐ratio p‐value for each term in `formula`.}
 #'   }
-#'   Row names correspond to \code{rownames(pbas)}.
+#'   Row names correspond to `rownames(pbas)`.
 #'
 #' @details
-#' The function loops over each segment, constructs a two‐column matrix \code{cbind(i, e)}, adds pseudocounts if requested, and fits a quasi‐binomial \code{\link[stats]{glm}}.
-#' If \code{return_pv = TRUE}, it calls \code{\link{qbinom_lrt}} to compute a likelihood‐ratio test for each term in \code{formula}.
-#' Any errors or warnings during fitting are caught; segments with fitting errors return \code{NA}.
+#' The function loops over each segment, constructs a two‐column matrix `cbind(i, e)`, adds pseudocounts if requested, and fits a quasi‐binomial `\link[stats]{glm}`.
+#' If `return_pv = TRUE`, it calls `\link{qbinom_lrt}` to compute a likelihood‐ratio test for each term in `formula`.
+#' Any errors or warnings during fitting are caught; segments with fitting errors return `NA`.
 #'
-#' @seealso \code{\link{qbinom_lrt}}, \code{\link[stats]{glm}}, \code{\link[plyr]{alply}}
+#' @seealso `\link{qbinom_lrt}`, `\link[stats]{glm}`, `\link[plyr]{alply}`
 #' @export
 fit_as_glm <- function(
     pbas,
@@ -241,30 +244,30 @@ fit_as_glm <- function(
 
 #' Quasi‐likelihood ratio test (Chi-square ANOVA) for a fitted quasi‐binomial GLM
 #'
-#' Given a fitted \code{glm(..., family = "quasibinomial")}, this function computes a likelihood‐ratio test for each term in the model, accounting for overdispersion.
+#' Given a fitted `glm(..., family = "quasibinomial")`, this function computes a likelihood‐ratio test for each term in the model, accounting for overdispersion.
 #'
-#' @param fit_obj A fitted \code{glm} object (quasi‐binomial family).
-#' @param overdisp Logical; if \code{TRUE}, use estimated dispersion from \code{fit_obj} (or \code{disp_param}) when computing test statistics.
-#'   If \code{FALSE}, force dispersion = 1 (i.e., treat as simple binomial).
+#' @param fit_obj A fitted `glm` object (quasi‐binomial family).
+#' @param overdisp Logical; if `TRUE`, use estimated dispersion from `fit_obj` (or `disp_param`) when computing test statistics.
+#'   If `FALSE`, force dispersion = 1 (i.e., treat as simple binomial).
 #' @param disp_param Optional numeric; if provided, use this as the dispersion parameter for the test.
-#'   Otherwise, estimate dispersion from \code{fit_obj}’s residuals.
-#' @param term_labels Character vector of term names (excluding the intercept) in the original formula, in the same order returned by \code{attr(terms(formula), "term.labels")}.
+#'   Otherwise, estimate dispersion from `fit_obj`’s residuals.
+#' @param term_labels Character vector of term names (excluding the intercept) in the original formula, in the same order returned by `attr(terms(formula), "term.labels")`.
 #' @param seg_id Character scalar; segment identifier (row name) used in warning messages.
 #'
-#' @return A numeric vector of length \code{length(term_labels) + 1}.
-#'   The first element is the dispersion estimate actually used (either \code{disp_param} or \code{summary(fit_obj)$dispersion}),
-#'    and the remaining elements are p‐values (Chisq tests) for each term in \code{term_labels}, in the same order.
-#'   If \code{fit_obj} is \code{NA} (fitting failed), returns a vector of \code{NA}s of appropriate length.
+#' @return A numeric vector of length `length(term_labels) + 1`.
+#'   The first element is the dispersion estimate actually used (either `disp_param` or `summary(fit_obj)$dispersion`),
+#'    and the remaining elements are p‐values (Chisq tests) for each term in `term_labels`, in the same order.
+#'   If `fit_obj` is `NA` (fitting failed), returns a vector of `NA`s of appropriate length.
 #'
 #' @details
-#' 1. If \code{disp_param} is \code{NULL}, we take \code{summary(fit_obj)$dispersion} as the overdispersion estimate.
-#'    If the model has zero residual degrees of freedom, dispersion cannot be estimated; in that case, we return \code{NA} for dispersion and issue a warning (unless \code{overdisp = FALSE}).
-#' 2. We set \code{disp_used = max(1, <disp_estimate>)} so that the effective dispersion is at least 1. If \code{overdisp = FALSE}, we force \code{disp_used = 1}.
-#' 3. We then call \code{\link[stats]{anova}(fit_obj, test = "Chisq", dispersion = disp_used)}.
+#' 1. If `disp_param` is `NULL`, we take `summary(fit_obj)$dispersion` as the overdispersion estimate.
+#'    If the model has zero residual degrees of freedom, dispersion cannot be estimated; in that case, we return `NA` for dispersion and issue a warning (unless `overdisp = FALSE`).
+#' 2. We set `disp_used = max(1, <disp_estimate>)` so that the effective dispersion is at least 1. If `overdisp = FALSE`, we force `disp_used = 1`.
+#' 3. We then call `\link[stats]{anova}(fit_obj, test = "Chisq", dispersion = disp_used)`.
 #'    The p‐values for each term appear in column 5 of the ANOVA table.
-#' 4. If any error occurs when computing the ANOVA, we return \code{rep(NA, length(term_labels) + 1)}.
+#' 4. If any error occurs when computing the ANOVA, we return `rep(NA, length(term_labels) + 1)`.
 #'
-#' @seealso \code{\link{fit_as_glm}}, \code{\link[stats]{anova}}, \code{\link[stats]{glm}}
+#' @seealso `\link{fit_as_glm}`, `\link[stats]{anova}`, `\link[stats]{glm}`
 #' @export
 qbinom_lrt <- function(
     fit_obj,
@@ -330,21 +333,21 @@ qbinom_lrt <- function(
 
 #' Determine grouping factor from a data.frame or SummarizedExperiment
 #'
-#' If \code{groupby} is a vector whose length matches the number of rows (or columns), this function treats it as the grouping factor directly.
-#' Otherwise, if \code{groupby} is one or more column names in a data.frame (or in \code{colData(se)}),
+#' If `groupby` is a vector whose length matches the number of rows (or columns), this function treats it as the grouping factor directly.
+#' Otherwise, if `groupby` is one or more column names in a data.frame (or in `colData(se)`),
 #'  it pastes those columns together (with a delimiter) to form a grouping factor.
 #'
-#' @param x Either a \code{SummarizedExperiment} (in which case its \code{colData()} is used) or a \code{data.frame} whose rows correspond to samples/pseudobulks.
+#' @param x Either a `SummarizedExperiment` (in which case its `colData()` is used) or a `data.frame` whose rows correspond to samples/pseudobulks.
 #' @param groupby Either:
 #'   \itemize{
-#'     \item A vector of length \code{nrow(x)}: treated as the grouping factor directly.
-#'     \item A character scalar or vector of column names in \code{x}: those columns are pasted (row‐wise) with a delimiter to form the grouping factor.
+#'     \item A vector of length `nrow(x)`: treated as the grouping factor directly.
+#'     \item A character scalar or vector of column names in `x`: those columns are pasted (row‐wise) with a delimiter to form the grouping factor.
 #'   }
-#' @param sep Character string used to separate pasted values when \code{groupby} is multiple column names. Default is \code{"\$"}.
+#' @param sep Character string used to separate pasted values when `groupby` is multiple column names. Default is `"\$"`.
 #'
-#' @return A character vector (or factor) of length \code{nrow(x)}, representing the grouping factor.
-#'   If \code{groupby} was already the same length as \code{nrow(x)}, it is returned unchanged.
-#'   Otherwise, it pastes together columns of \code{x}.
+#' @return A character vector (or factor) of length `nrow(x)`, representing the grouping factor.
+#'   If `groupby` was already the same length as `nrow(x)`, it is returned unchanged.
+#'   Otherwise, it pastes together columns of `x`.
 #'
 #' @examples
 #' df <- data.frame(
@@ -366,9 +369,9 @@ qbinom_lrt <- function(
 #' print(grp2)
 #' print(grp3)
 #'
-#' @seealso \code{\link{filter_segments_and_samples}}, \code{\link{test_all_groups_as}}
+#' @seealso `\link{filter_segments_and_samples}`, `\link{test_all_groups_as}`
 #' @export
-get_groupby_factor <- function(x, groupby, sep = DELIMETER) {
+get_groupby_factor <- function(x, groupby, sep = DELIMITER) {
   # If x is SummarizedExperiment, extract its colData as a data.frame
   if ("SummarizedExperiment" %in% class(x)) {
     x <- as.data.frame(SummarizedExperiment::colData(x))
@@ -398,39 +401,39 @@ get_groupby_factor <- function(x, groupby, sep = DELIMETER) {
 
 #' Test alternative splicing across all groups simultaneously
 #'
-#' For a \code{SummarizedExperiment} of splicing segments with assays “i” (inclusion counts) and “e” (exclusion counts),
+#' For a `SummarizedExperiment` of splicing segments with assays “i” (inclusion counts) and “e” (exclusion counts),
 #'  this function tests whether PSI differs across multiple groups (e.g., cell types) using a quasi‐binomial GLM.
 #' It returns a data.frame of p‐values, adjusted FDR, and delta‐PSI for each segment.
 #'
-#' @param pbas A \code{SummarizedExperiment} where each row is a segment and each column is a pseudobulk.
+#' @param pbas A `SummarizedExperiment` where each row is a segment and each column is a pseudobulk.
 #'   Must contain assays named “i” (inclusion) and “e” (exclusion).
 #'   Rows correspond to segment IDs; columns correspond to samples/pseudobulks.
 #' @param groupby Either:
 #'   \itemize{
-#'     \item A vector of length \code{ncol(pbas)} that directly gives a group label for each column, or
-#'     \item One or more column names in \code{colData(pbas)}, whose values (pasted together if multiple) define the grouping factor.
+#'     \item A vector of length `ncol(pbas)` that directly gives a group label for each column, or
+#'     \item One or more column names in `colData(pbas)`, whose values (pasted together if multiple) define the grouping factor.
 #'   }
-#'   See \code{\link{get_groupby_factor}} for details.
-#' @param parallel Logical; if \code{TRUE}, fit per‐segment GLMs in parallel (requires a registered \code{plyr} backend). Default \code{FALSE}.
+#'   See `\link{get_groupby_factor}` for details.
+#' @param parallel Logical; if `TRUE`, fit per‐segment GLMs in parallel (requires a registered `plyr` backend). Default `FALSE`.
 #'
-#' @return A data.frame with one row per segment (rownames = \code{rownames(pbas)} (segment IDs)), containing columns:
+#' @return A data.frame with one row per segment (rownames = `rownames(pbas)` (segment IDs)), containing columns:
 #'   \describe{
 #'     \item{overdispersion}{Estimated dispersion from each segment’s GLM.}
-#'     \item{group}{Raw p‐value from the likelihood‐ratio test for the \code{group} term.}
+#'     \item{group}{Raw p‐value from the likelihood‐ratio test for the `group` term.}
 #'     \item{group_fdr}{Benjamini‐Hochberg adjusted FDR (across all segments).}
-#'     \item{low_state}{Group label with lowest mean PSI (from \code{get_dpsi()}).}
+#'     \item{low_state}{Group label with lowest mean PSI (from `get_dpsi()`).}
 #'     \item{high_state}{Group label with highest mean PSI.}
-#'     \item{dpsi}{Difference in mean PSI between \code{high_state} and \code{low_state}.}
+#'     \item{dpsi}{Difference in mean PSI between `high_state` and `low_state`.}
 #'   }
 #'
 #' @details
-#' 1. Converts \code{groupby} into a single grouping vector \code{group_factor} via \code{get_groupby_factor()}.
-#' 2. Calls \code{fit_as_glm()} with formula \code{x ~ group}, where \code{x} is the per‐segment \code{cbind(i,e)}.
-#' 3. Extracts raw p‐values for the \code{group} term, adjusts them (Benjamini–Hochberg) into \code{group_fdr}.
-#' 4. Computes delta‐PSI (\code{dpsi}), \code{low_state}, and \code{high_state} for each segment via \code{get_dpsi()}.
+#' 1. Converts `groupby` into a single grouping vector `group_factor` via `get_groupby_factor()`.
+#' 2. Calls `fit_as_glm()` with formula `x ~ group`, where `x` is the per‐segment `cbind(i,e)`.
+#' 3. Extracts raw p‐values for the `group` term, adjusts them (Benjamini-Hochberg) into `group_fdr`.
+#' 4. Computes delta‐PSI (`dpsi`), `low_state`, and `high_state` for each segment via `get_dpsi()`.
 #' 5. Combine results (endure matching row order)
 #'
-#' @seealso \code{\link{fit_as_glm}}, \code{\link{get_groupby_factor}}, \code{\link{get_dpsi}}, \code{\link{test_pair_as}}
+#' @seealso `\link{fit_as_glm}`, `\link{get_groupby_factor}`, `\link{get_dpsi}`, `\link{test_pair_as}`
 #' @export
 test_all_groups_as <- function(
     pbas,
@@ -449,7 +452,7 @@ test_all_groups_as <- function(
   )
   # pv_df has columns: overdispersion, group (p‐value)
 
-  # 3. Adjust p‐values (Benjamini–Hochberg)
+  # 3. Adjust p‐values (Benjamini-Hochberg)
   pv_df <- as.data.frame(pv_df, stringsAsFactors = FALSE)
   pv_df$group_fdr <- stats::p.adjust(pv_df$group, method = "BH")
 
@@ -470,39 +473,39 @@ test_all_groups_as <- function(
 
 #' Test alternative splicing between two conditions (pairwise)
 #'
-#' For a \code{SummarizedExperiment} of splicing segments with assays “i” (inclusion counts) and “e” (exclusion counts),
+#' For a `SummarizedExperiment` of splicing segments with assays “i” (inclusion counts) and “e” (exclusion counts),
 #'  this function tests for differential splicing between two specified groups (e.g., two cell types) using a quasi‐binomial GLM per segment.
 #' It returns a data.frame of p‐values, FDR, and delta‐PSI between the two conditions.
 #'
-#' @param pbas A \code{SummarizedExperiment} where each row is a segment and each column is a pseudobulk.
+#' @param pbas A `SummarizedExperiment` where each row is a segment and each column is a pseudobulk.
 #'   Must contain assays named “i” (inclusion) and “e” (exclusion).
 #'   Rows correspond to segments; columns correspond to samples/pseudobulks.
 #' @param groupby Either:
 #'   \itemize{
-#'     \item A vector of length \code{ncol(pbas)} that directly gives a group label for each column, or
-#'     \item One or more column names in \code{colData(pbas)}, whose values (pasted together if multiple) define the grouping factor.
+#'     \item A vector of length `ncol(pbas)` that directly gives a group label for each column, or
+#'     \item One or more column names in `colData(pbas)`, whose values (pasted together if multiple) define the grouping factor.
 #'   }
-#'   See \code{\link{get_groupby_factor}} for details.
-#' @param conditions A length‐2 character vector specifying the two group labels to compare (e.g., \code{c("A", "B")}).
-#' @param parallel Logical; if \code{TRUE}, fit per‐segment GLMs in parallel (requires a registered \code{plyr} backend). Default \code{FALSE}.
+#'   See `\link{get_groupby_factor}` for details.
+#' @param conditions A length‐2 character vector specifying the two group labels to compare (e.g., `c("A", "B")`).
+#' @param parallel Logical; if `TRUE`, fit per‐segment GLMs in parallel (requires a registered `plyr` backend). Default `FALSE`.
 #'
-#' @return A data.frame with one row per segment (rownames = \code{rownames(pbas)}), containing columns:
+#' @return A data.frame with one row per segment (rownames = `rownames(pbas)`), containing columns:
 #'   \describe{
 #'     \item{overdispersion}{Estimated dispersion from each segment’s GLM.}
 #'     \item{pv}{Raw p‐value for the group term (two‐level factor).}
-#'     \item{fdr}{Benjamini–Hochberg FDR (across all segments).}
-#'     \item{dpsi}{Difference in mean PSI between \code{conditions[2]} and \code{conditions[1]}.}
+#'     \item{fdr}{Benjamini-Hochberg FDR (across all segments).}
+#'     \item{dpsi}{Difference in mean PSI between `conditions[2]` and `conditions[1]`.}
 #'   }
 #'
 #' @details
-#' 1. Converts \code{groupby} into a single grouping vector \code{group_factor} via \code{get_groupby_factor()}.
-#' 2. Filters \code{group_factor} and \code{pbas} to keep only columns corresponding to the two \code{conditions}.
-#' 3. Calls \code{fit_as_glm()} with \code{formula = x ~ group} to get raw p‐values for each segment.
-#' 4. Adjusts p‐values (Benjamini–Hochberg) into \code{fdr}.
-#' 5. Computes delta‐PSI (\code{dpsi}) per segment by pseudobulking and calling \code{calc_psi()}, then taking
+#' 1. Converts `groupby` into a single grouping vector `group_factor` via `get_groupby_factor()`.
+#' 2. Filters `group_factor` and `pbas` to keep only columns corresponding to the two `conditions`.
+#' 3. Calls `fit_as_glm()` with `formula = x ~ group` to get raw p‐values for each segment.
+#' 4. Adjusts p‐values (Benjamini-Hochberg) into `fdr`.
+#' 5. Computes delta‐PSI (`dpsi`) per segment by pseudobulking and calling `calc_psi()`, then taking
 #'    mean PSI per condition and subtracting.
 #'
-#' @seealso \code{\link{fit_as_glm}}, \code{\link{get_groupby_factor}}, \code{\link{calc_psi}}, \code{\link{pseudobulk}}, \code{\link{test_all_groups_as}}
+#' @seealso `\link{fit_as_glm}`, `\link{get_groupby_factor}`, \code{\link{calc_psi}}, \link{pseudobulk}, `\link{test_all_groups_as}`
 #' @export
 test_pair_as <- function(
     pbas,
@@ -527,7 +530,7 @@ test_pair_as <- function(
   )
   # pv_df has columns: overdispersion, group
 
-  # 4. Adjust p‐values (Benjamini–Hochberg)
+  # 4. Adjust p‐values (Benjamini-Hochberg)
   pv_df <- as.data.frame(pv_df, stringsAsFactors = FALSE)
   pv_df$fdr <- stats::p.adjust(pv_df$group, method = "BH")
 
@@ -556,43 +559,43 @@ test_pair_as <- function(
 
 #' Identify marker segments for each group via one‐vs‐rest tests
 #'
-#' For a \code{SummarizedExperiment} of splicing segments with assays “psi” (percent spliced‐in),
+#' For a `SummarizedExperiment` of splicing segments with assays “psi” (percent spliced‐in),
 #'  this function conducts, for each unique group label, a one‐vs‐rest quasi‐binomial GLM test
 #'  (i.e., comparing that group to all other samples).
 #' It returns p‐values and delta‐PSI matrices (segments × groups).
 #'
-#' @param pbas A \code{SummarizedExperiment} where each row is a segment and each column is a pseudobulk.
+#' @param pbas A `SummarizedExperiment` where each row is a segment and each column is a pseudobulk.
 #'   Must contain assays “i”, “e”, and “psi”.
 #'   Rows correspond to segments; columns correspond to samples/pseudobulks.
 #' @param groupby Either:
 #'   \itemize{
-#'     \item A vector of length \code{ncol(pbas)} that directly gives a group label for each column, or
-#'     \item One or more column names in \code{colData(pbas)}, whose values (pasted together if multiple) define the grouping factor.
+#'     \item A vector of length `ncol(pbas)` that directly gives a group label for each column, or
+#'     \item One or more column names in `colData(pbas)`, whose values (pasted together if multiple) define the grouping factor.
 #'   }
-#'   See \code{\link{get_groupby_factor}} for details.
-#' @param parallel Logical; if \code{TRUE}, fit per‐segment GLMs in parallel (requires a registered \code{plyr} backend). Default \code{FALSE}.
-#' @param verbose Logical; if \code{TRUE}, prints each group being tested. Default \code{FALSE}.
+#'   See `\link{get_groupby_factor}` for details.
+#' @param parallel Logical; if `TRUE`, fit per‐segment GLMs in parallel (requires a registered `plyr` backend). Default `FALSE`.
+#' @param verbose Logical; if `TRUE`, prints each group being tested. Default `FALSE`.
 #'
 #' @return A list with three elements:
 #'   \describe{
 #'     \item{pv}{Matrix: Raw p‐values, with rows = segments, columns = group labels}
-#'     \item{fdr}{Matrix: Benjamini–Hochberg FDR (across all segments)}
-#'     \item{dpsi}{Matrix: Delta‐PSI (mean PSI(group) – mean PSI(others)) per segment}
+#'     \item{fdr}{Matrix: Benjamini-Hochberg FDR (across all segments)}
+#'     \item{dpsi}{Matrix: Delta‐PSI (mean PSI(group) - mean PSI(others)) per segment}
 #'   }
-#'   Row names of each matrix are \code{rownames(pbas)}; column names are the unique groups.
+#'   Row names of each matrix are `rownames(pbas)`; column names are the unique groups.
 #'
 #' @details
-#' 1. Builds a grouping factor via \code{get_groupby_factor(pbas, groupby)}.
-#' 2. For each unique label \code{group} in that factor:
+#' 1. Builds a grouping factor via `get_groupby_factor(pbas, groupby)`.
+#' 2. For each unique label `group` in that factor:
 #'    \enumerate{
-#'      \item Creates a binary factor \code{f} where \code{f == TRUE} if sample’s group == \code{group}, FALSE otherwise.
-#'      \item Calls \code{fit_as_glm()} with \code{formula = x ~ f} and \code{data_terms = list(f = f)}, requesting p‐values (\code{return_pv = TRUE}).
-#'      \item Extracts the “group” p‐value column (corresponding to \code{f}) for each segment and stores in \code{pv[, group]}.
-#'      \item Computes \code{dpsi[, group]} as \code{mean(psi[segment, f]) – mean(psi[segment, !f])}.
+#'      \item Creates a binary factor `f` where `f == TRUE` if sample’s group == `group`, FALSE otherwise.
+#'      \item Calls `fit_as_glm()` with `formula = x ~ f` and `data_terms = list(f = f)`, requesting p‐values (`return_pv = TRUE`).
+#'      \item Extracts the “group” p‐value column (corresponding to `f`) for each segment and stores in `pv[, group]`.
+#'      \item Computes `dpsi[, group]` as `mean(psi[segment, f]) - mean(psi[segment, !f])`.
 #'    }
-#' 3. Adjusts each column of \code{pv} by Benjamini–Hochberg into \code{fdr[, group]}.
+#' 3. Adjusts each column of `pv` by Benjamini-Hochberg into `fdr[, group]`.
 #'
-#' @seealso \code{\link{fit_as_glm}}, \code{\link{get_groupby_factor}}, \code{\link{calc_psi}}
+#' @seealso `\link{fit_as_glm}`, `\link{get_groupby_factor}`, `\link{calc_psi}`
 #' @export
 find_marker_as <- function(
     pbas,
@@ -605,7 +608,7 @@ find_marker_as <- function(
   n_segs <- nrow(pbas)
   n_groups <- length(unique_groups)
 
-  # 2. Initialize result matrices
+  # 2. Initialise result matrices
   pv_mat <- matrix(NA_real_,
     nrow = n_segs, ncol = n_groups,
     dimnames = list(rownames(pbas), unique_groups)
@@ -659,30 +662,30 @@ find_marker_as <- function(
 
 #' Select markers from all‐celltype test results
 #'
-#' From a data.frame of per‐segment results comparing all groups simultaneously (e.g., output of \code{test_all_groups_as()}),
+#' From a data.frame of per‐segment results comparing all groups simultaneously (e.g., output of `test_all_groups_as()`),
 #'   this function selects only those segments that pass both a group‐level FDR threshold and a minimum delta‐PSI threshold.
 #' It returns a data.frame with one row per qualifying segment.
 #'
-#' @param all_celltype_df A data.frame (rownames = segment IDs) (output of \code{test_all_groups_as()}), containing columns:
+#' @param all_celltype_df A data.frame (rownames = segment IDs) (output of `test_all_groups_as()`), containing columns:
 #'   \describe{
 #'     \item{overdispersion}{Estimated dispersion from each segment’s GLM.}
-#'     \item{group}{Raw p‐value from the likelihood‐ratio test for the \code{group} term.}
+#'     \item{group}{Raw p‐value from the likelihood‐ratio test for the `group` term.}
 #'     \item{group_fdr}{Benjamini‐Hochberg adjusted FDR (across all segments).}
-#'     \item{low_state}{Group label with lowest mean PSI (from \code{get_dpsi()}).}
+#'     \item{low_state}{Group label with lowest mean PSI (from `get_dpsi()`).}
 #'     \item{high_state}{Group label with highest mean PSI.}
-#'     \item{dpsi}{Difference in mean PSI between \code{high_state} and \code{low_state}.}
+#'     \item{dpsi}{Difference in mean PSI between `high_state` and `low_state`.}
 #'   }
 #' @param fdr_thr Numeric: false discovery rate cutoff (default: 0.05).
 #' @param dpsi_thr Numeric: minimum absolute delta PSI cutoff (default: 0.1).
 #'
-#' @return A data.frame with one row per segment satisfying \code{group_fdr < fdr_thr} and \code{dpsi > dpsi_thr}.
+#' @return A data.frame with one row per segment satisfying `group_fdr < fdr_thr` and `dpsi > dpsi_thr`.
 #'   Columns in the returned data.frame:
 #'   \describe{
-#'     \item{\code{pv}}{Raw p‐value from the likelihood‐ratio test for the group effect (copied from \code{all_celltype_df$group}).}
-#'     \item{\code{fdr}}{Benjamini‐Hochberg adjusted FDR (copied from \code{all_celltype_df$group_fdr}).}
-#'     \item{\code{dpsi}}{Delta‐PSI (copied from \code{all_celltype_df$dpsi}).}
-#'     \item{\code{seg_id}}{Segment ID (rownames of \code{all_celltype_df}).}
-#'     \item{\code{group}}{Group label with highest mean PSI (copied from \code{all_celltype_df$high_state}).}
+#'     \item{`pv`}{Raw p‐value from the likelihood‐ratio test for the group effect (copied from `all_celltype_df$group`).}
+#'     \item{`fdr`}{Benjamini‐Hochberg adjusted FDR (copied from `all_celltype_df$group_fdr`).}
+#'     \item{`dpsi`}{Delta‐PSI (copied from `all_celltype_df$dpsi`).}
+#'     \item{`seg_id`}{Segment ID (rownames of `all_celltype_df`).}
+#'     \item{`group`}{Group label with highest mean PSI (copied from `all_celltype_df$high_state`).}
 #'   }
 #'   Row names of the returned data.frame are the segment IDs.
 #'
@@ -717,53 +720,53 @@ select_markers_from_all_celltype_test <- function(
 
 #' Select top marker segments per group (celltype)
 #'
-#' From a list of per‐segment test results (as returned by \code{find_marker_as()}),
-#'  this function selects up to \code{n} top segments per group
+#' From a list of per‐segment test results (as returned by `find_marker_as()`),
+#'  this function selects up to `n` top segments per group
 #'  whose FDR is below a threshold and whose absolute delta‐PSI exceeds a threshold.
 #' Optionally, it removes duplicate segments so that each segment appears only once
 #'  (assigned to the group where it has the largest |dpsi|).
 #'
-#' @param markers A list containing numeric matrics \code{pv}, \code{fdr}, and \code{dpsi},
-#'   each a matrix with rows = segments and columns = group labels (as returned by \code{find_marker_as()}).
+#' @param markers A list containing numeric matrices `pv`, `fdr`, and `dpsi`,
+#'   each a matrix with rows = segments and columns = group labels (as returned by `find_marker_as()`).
 #'   \describe{
-#'     \item{\code{markers$pv}}{Matrix of raw p‐values, dimensions: ∣segments∣ × ∣groups∣.}
-#'     \item{\code{markers$fdr}}{Matrix of Benjamini‐Hochberg adjusted FDR p‐values, same dimensions.}
-#'     \item{\code{markers$dpsi}}{Matrix of delta‐PSI (mean PSI(group) – mean PSI(others)), same dimensions.}
+#'     \item{`markers$pv`}{Matrix of raw p‐values, dimensions: ∣segments∣ × ∣groups∣.}
+#'     \item{`markers$fdr`}{Matrix of Benjamini‐Hochberg adjusted FDR p‐values, same dimensions.}
+#'     \item{`markers$dpsi`}{Matrix of delta‐PSI (mean PSI(group) - mean PSI(others)), same dimensions.}
 #'   }
 #' @param n Integer: maximum number of markers to return per cell type (default: 5).
 #' @param fdr_thr Numeric: false discovery rate cutoff (default: 0.05).
 #' @param dpsi_thr Numeric: minimum absolute delta PSI cutoff (default: 0.1).
-#' @param clean_duplicates Logical: if \code{TRUE}, keep only one entry per segment
-#'                         (the one with highest |dpsi|) across all cell types (default: \code{TRUE}).
+#' @param clean_duplicates Logical: if `TRUE`, keep only one entry per segment
+#'                         (the one with highest |dpsi|) across all cell types (default: `TRUE`).
 #'
 #' @return A data.frame with selected marker segments. Columns:
 #'   \describe{
-#'     \item{\code{pv}}{Raw p‐value from the likelihood‐ratio test for the group effect in the selected group.}
-#'     \item{\code{fdr}}{Benjamini‐Hochberg adjusted FDR value for the segment in the selected group.}
-#'     \item{\code{dpsi}}{Delta‐PSI (signed) for the segment in the selected group.}
-#'     \item{\code{seg_id}}{Segment identifier (rownames of \code{markers$pv}).}
-#'     \item{\code{group}}{Group label for which this segment is selected.}
+#'     \item{`pv`}{Raw p‐value from the likelihood‐ratio test for the group effect in the selected group.}
+#'     \item{`fdr`}{Benjamini‐Hochberg adjusted FDR value for the segment in the selected group.}
+#'     \item{`dpsi`}{Delta‐PSI (signed) for the segment in the selected group.}
+#'     \item{`seg_id`}{Segment identifier (rownames of `markers$pv`).}
+#'     \item{`group`}{Group label for which this segment is selected.}
 #'   }
 #'   Rows are ordered by descending |dpsi| across all selected segments.
 #'
 #' @details
-#' For each group (column) in \code{markers$fdr}, the function:
+#' For each group (column) in `markers$fdr`, the function:
 #' \enumerate{
-#'   \item Identifies segments \code{seg} satisfying
-#'         \code{markers$fdr[seg, group] <= fdr_thr} and
-#'         \code{|markers$dpsi[seg, group]| >= dpsi_thr}.
-#'   \item If at least one segment passes, constructs a temporary data.frame \code{t} containing
-#'         \code{pv = markers$pv[seg, group]},
-#'         \code{fdr = markers$fdr[seg, group]},
-#'         \code{dpsi = markers$dpsi[seg, group]},
-#'         \code{seg_id = seg},
-#'         \code{group = group}.
-#'   \item Selects up to \code{n} rows from \code{t}, ordering by \code{abs(dpsi)} in descending order.
-#'   \item Appends these rows to an aggregate \code{res} data.frame.
+#'   \item Identifies segments `seg` satisfying
+#'         `markers$fdr[seg, group] <= fdr_thr` and
+#'         `|markers$dpsi[seg, group]| >= dpsi_thr`.
+#'   \item If at least one segment passes, constructs a temporary data.frame `t` containing
+#'         `pv = markers$pv[seg, group]`,
+#'         `fdr = markers$fdr[seg, group]`,
+#'         `dpsi = markers$dpsi[seg, group]`,
+#'         `seg_id = seg`,
+#'         `group = group`.
+#'   \item Selects up to `n` rows from `t`, ordering by `abs(dpsi)` in descending order.
+#'   \item Appends these rows to an aggregate `res` data.frame.
 #' }
-#' If \code{clean_duplicates = TRUE}, it then splits \code{res} by \code{seg_id} and retains only the row
-#'  where \code{|dpsi|} is maximal across groups, removing duplicates.
-#' Finally, it re‐orders \code{res} by \code{abs(dpsi)} in descending order and returns it.
+#' If `clean_duplicates = TRUE`, it then splits `res` by `seg_id` and retains only the row
+#'  where `abs(dpsi)` is maximal across groups, removing duplicates.
+#' Finally, it re‐orders `res` by `abs(dpsi)` in descending order and returns it.
 #'
 #' @examples
 #' # Load example data
@@ -773,7 +776,7 @@ select_markers_from_all_celltype_test <- function(
 #' df <- select_markers(pbasf@metadata$markers, n = 10, fdr_thr = 0.01, dpsi_thr = 0.2)
 #' head(df)
 #'
-#' @seealso \code{\link{find_marker_as}}, \code{\link{test_all_groups_as}}, \code{\link{test_pair_as}}
+#' @seealso `\link{find_marker_as}`, `\link{test_all_groups_as}`, `\link{test_pair_as}`
 #' @export
 select_markers <- function(
     markers,
@@ -781,7 +784,7 @@ select_markers <- function(
     fdr_thr = 0.05,
     dpsi_thr = 0.1,
     clean_duplicates = TRUE) {
-  # Initialize an empty result
+  # Initialise an empty result
   result <- NULL
 
   # Iterate over each group (celltype) (column name) in the fdr matrix
@@ -850,54 +853,54 @@ select_markers <- function(
 #' Select combined marker segments from per‐group and all‐groups tests
 #'
 #' This function merges two sets of marker results:
-#'   1. Per‐group markers (output of \code{select_markers}): segments deemed significant in one‐vs‐rest tests.
-#'   2. All‐groups markers (output of \code{select_markers_from_all_celltype_test}): segments significant across all groups.
+#'   1. Per‐group markers (output of `select_markers`): segments deemed significant in one‐vs‐rest tests.
+#'   2. All‐groups markers (output of `select_markers_from_all_celltype_test`): segments significant across all groups.
 #'
 #' For each group, it prioritizes segments identified by one‐vs‐rest tests; any segment not already selected but significant in the all‐groups test is labeled as a “background” marker.
-#' The result contains at most \code{n} segments per group, with ties broken by largest |dpsi|.
+#' The result contains at most `n` segments per group, with ties broken by largest |dpsi|.
 #'
-#' @param markers A list containing numeric matrics \code{pv}, \code{fdr}, and \code{dpsi},
-#'   each a matrix with rows = segments and columns = group labels (as returned by \code{find_marker_as()}).
+#' @param markers A list containing numeric matrices `pv`, `fdr`, and `dpsi`,
+#'   each a matrix with rows = segments and columns = group labels (as returned by `find_marker_as()`).
 #'   \describe{
-#'     \item{\code{markers$pv}}{Matrix of raw p‐values, dimensions: ∣segments∣ × ∣groups∣.}
-#'     \item{\code{markers$fdr}}{Matrix of Benjamini‐Hochberg adjusted FDR p‐values, same dimensions.}
-#'     \item{\code{markers$dpsi}}{Matrix of delta‐PSI (mean PSI(group) – mean PSI(others)), same dimensions.}
+#'     \item{`markers$pv`}{Matrix of raw p‐values, dimensions: ∣segments∣ × ∣groups∣.}
+#'     \item{`markers$fdr`}{Matrix of Benjamini‐Hochberg adjusted FDR p‐values, same dimensions.}
+#'     \item{`markers$dpsi`}{Matrix of delta‐PSI (mean PSI(group) - mean PSI(others)), same dimensions.}
 #'   }
-#' @param all_celltype_df A data.frame (rownames = segment IDs) (output of \code{test_all_groups_as()}), containing columns:
+#' @param all_celltype_df A data.frame (rownames = segment IDs) (output of `test_all_groups_as()`), containing columns:
 #'   \describe{
 #'     \item{overdispersion}{Estimated dispersion from each segment’s GLM.}
-#'     \item{group}{Raw p‐value from the likelihood‐ratio test for the \code{group} term.}
+#'     \item{group}{Raw p‐value from the likelihood‐ratio test for the `group` term.}
 #'     \item{group_fdr}{Benjamini‐Hochberg adjusted FDR (across all segments).}
-#'     \item{low_state}{Group label with lowest mean PSI (from \code{get_dpsi()}).}
+#'     \item{low_state}{Group label with lowest mean PSI (from `get_dpsi()`).}
 #'     \item{high_state}{Group label with highest mean PSI.}
-#'     \item{dpsi}{Difference in mean PSI between \code{high_state} and \code{low_state}.}
+#'     \item{dpsi}{Difference in mean PSI between `high_state` and `low_state`.}
 #'   }
-#' @param n Integer: maximum number of markers to return per cell type (after combining) (default: \code{Inf} (no limit)).
+#' @param n Integer: maximum number of markers to return per cell type (after combining) (default: `Inf` (no limit)).
 #' @param fdr_thr Numeric: false discovery rate cutoff (default: 0.05).
 #' @param dpsi_thr Numeric: minimum absolute delta PSI cutoff (default: 0.1).
 #'
 #' @return A data.frame with one row per selected segment, containing:
 #'   \describe{
-#'     \item{\code{pv}}{Raw p‐value (from either per‐group or all‐groups test).}
-#'     \item{\code{fdr}}{Adjusted FDR (from the same test).}
-#'     \item{\code{dpsi}}{Delta‐PSI (for the group that nominated this segment).}
-#'     \item{\code{seg_id}}{Segment IDs (rownames).}
-#'     \item{\code{group}}{Group label for which the segment is selected.}
-#'     \item{\code{is_marker}}{Logical: \code{TRUE} if selected by the per‐group test, \code{FALSE} if only from the all‐groups test.}
+#'     \item{`pv`}{Raw p‐value (from either per‐group or all‐groups test).}
+#'     \item{`fdr`}{Adjusted FDR (from the same test).}
+#'     \item{`dpsi`}{Delta‐PSI (for the group that nominated this segment).}
+#'     \item{`seg_id`}{Segment IDs (rownames).}
+#'     \item{`group`}{Group label for which the segment is selected.}
+#'     \item{`is_marker`}{Logical: `TRUE` if selected by the per‐group test, `FALSE` if only from the all‐groups test.}
 #'   }
-#'   Row names are the segment IDs. Rows are ordered within each group by descending |dpsi| and limited to \code{n} per group.
+#'   Row names are the segment IDs. Rows are ordered within each group by descending |dpsi| and limited to `n` per group.
 #'
 #' @details
 #' 1. Per‐group markers (priority):
-#'    Call \code{select_markers(markers, n = Inf, fdr_thr = fdr_thr, dpsi_thr = dpsi_thr, clean_duplicates = TRUE)}
-#'     to gather all segments that pass thresholds in any group. Label these as \code{is_marker = TRUE}.
+#'    Call `select_markers(markers, n = Inf, fdr_thr = fdr_thr, dpsi_thr = dpsi_thr, clean_duplicates = TRUE)`
+#'     to gather all segments that pass thresholds in any group. Label these as `is_marker = TRUE`.
 #' 2. All‐groups markers (background):
-#'    Call \code{select_markers_from_all_celltype_test(all_celltype_df, fdr_thr = fdr_thr, dpsi_thr = dpsi_thr)}
-#'     to gather segments passing the all‐groups thresholds. Exclude any segment already in step 1. Label remaining as \code{is_marker = FALSE}.
+#'    Call `select_markers_from_all_celltype_test(all_celltype_df, fdr_thr = fdr_thr, dpsi_thr = dpsi_thr)`
+#'     to gather segments passing the all‐groups thresholds. Exclude any segment already in step 1. Label remaining as `is_marker = FALSE`.
 #' 3. Combine and trim:
-#'    For each group, among combined rows (priority first), keep at most \code{n} segments ranked by descending |dpsi|.
+#'    For each group, among combined rows (priority first), keep at most `n` segments ranked by descending |dpsi|.
 #'
-#' @seealso \code{\link{select_markers}}, \code{\link{select_markers_from_all_celltype_test}}
+#' @seealso `\link{select_markers}`, `\link{select_markers_from_all_celltype_test}`
 #' @export
 select_all_markers <- function(
     markers,
@@ -968,40 +971,40 @@ select_all_markers <- function(
 #' It also flags whether the segment’s gene has at least one coding overlap.
 #'
 #' @param gtf_path Character: path to an Ensembl GTF file
-#'   (tab‐delimited, with columns: \code{chr_id}, \code{feature} (e.g., "CDS"), \code{start}, \code{stop}, \code{strand}, and gene metadata).
-#'   Must be readable by \code{read.table(..., comment.char = "#")}.
+#'   (tab‐delimited, with columns: `chr_id`, `feature` (e.g., "CDS"), `start`, `stop`, `strand`, and gene metadata).
+#'   Must be readable by `read.table(..., comment.char = "#")`.
 #' @param as_list SAJR::loadSAData() output list containing segment coordinates.
 #' List containing at least these components:
 #'   \describe{
-#'     \item{\code{seg}}{A data.frame with columns \code{chr_id}, \code{start}, \code{stop}, \code{strand}, and \code{gene_id} for each segment. Row names are segment IDs.}
+#'     \item{`seg`}{A data.frame with columns `chr_id`, `start`, `stop`, `strand`, and `gene_id` for each segment. Row names are segment IDs.}
 #'   }
 #'
-#' @return The input \code{as_list} with additional columns:
+#' @return The input `as_list` with additional columns:
 #'   \describe{
-#'     \item{\code{seg$cod}}{Character vector of length ∣segments∣.
-#'           Each element is \code{'c'} if the segment is completely within a CDS, \code{'p'} if partially overlaps, or \code{'n'} if no overlap.}
-#'     \item{\code{seg$cod.gene}}{Logical vector of length ∣segments∣. \code{TRUE} if the segment’s gene contains at least one segment with \code{cod != 'n'}.}
+#'     \item{`seg$cod`}{Character vector of length ∣segments∣.
+#'           Each element is `'c'` if the segment is completely within a CDS, `'p'` if partially overlaps, or `'n'` if no overlap.}
+#'     \item{`seg$cod.gene`}{Logical vector of length ∣segments∣. `TRUE` if the segment’s gene contains at least one segment with `cod != 'n'`.}
 #'   }
-#'   The modified \code{as_list} is returned invisibly.
+#'   The modified `as_list` is returned invisibly.
 #'
 #' @details
-#' 1. Read the GTF file via \code{read.table(gtf_path, sep = "\t", header = FALSE, comment.char = "#")} and
-#'    filter to rows where the second column (\code{feature}) == "CDS".
-#'    Keep columns: \code{chr_id}, \code{start}, \code{stop}, \code{strand}.
-#' 2. Force CDS entries to a \code{GRanges} using \code{GenomicRanges::GRanges()}.
-#'    - If some \code{chr_id} values lack the "chr" prefix but segments use it (or vice versa), prefix or strip "chr" to match.
-#' 3. Reduce the CDS ranges per chromosome/strand to merge overlapping exons (via \code{reduce()}).
-#' 4. Build a \code{GRanges} for all segments from \code{as_list$seg}, using \code{chr_id}, \code{start}, \code{stop}, and \code{strand}.
-#' 5. Use \code{findOverlaps(seg_gr, cds_gr, type = "any")} to find any overlap, and \code{findOverlaps(seg_gr, cds_gr, type = "within")} to find full containment.
-#' 6. Initialize \code{cod = 'n'} for all segments. For indices in the "any" overlap set, set \code{cod = 'p'}. For indices in the "within" set, set \code{cod = 'c'}.
-#' 7. Determine \code{cod.gene} by marking as \code{TRUE} any segment whose \code{gene_id} appears among those with \code{cod != 'n'}.
+#' 1. Read the GTF file via `read.table(gtf_path, sep = "\t", header = FALSE, comment.char = "#")` and
+#'    filter to rows where the second column (`feature`) == "CDS".
+#'    Keep columns: `chr_id`, `start`, `stop`, `strand`.
+#' 2. Force CDS entries to a `GRanges` using `GenomicRanges::GRanges()`.
+#'    - If some `chr_id` values lack the "chr" prefix but segments use it (or vice versa), prefix or strip "chr" to match.
+#' 3. Reduce the CDS ranges per chromosome/strand to merge overlapping exons (via `reduce()`).
+#' 4. Build a `GRanges` for all segments from `as_list$seg`, using `chr_id`, `start`, `stop`, and `strand`.
+#' 5. Use `findOverlaps(seg_gr, cds_gr, type = "any")` to find any overlap, and `findOverlaps(seg_gr, cds_gr, type = "within")` to find full containment.
+#' 6. Initialise `cod = 'n'` for all segments. For indices in the "any" overlap set, set `cod = 'p'`. For indices in the "within" set, set `cod = 'c'`.
+#' 7. Determine `cod.gene` by marking as `TRUE` any segment whose `gene_id` appears among those with `cod != 'n'`.
 #'
 #' @note
-#' - Requires \code{GenomicRanges} for \code{GRanges}, \code{reduce()}, and \code{findOverlaps()}.
-#' - Uses \code{IRanges::IRanges()} internally for range construction.
+#' - Requires `GenomicRanges` for `GRanges`, `reduce()`, and `findOverlaps()`.
+#' - Uses `IRanges::IRanges()` internally for range construction.
 #' - If chromosome naming mismatches occur ("chr1" vs. "1"), this function attempts to harmonize by adding "chr" prefix where needed.
 #'
-#' @seealso \code{\link[GenomicRanges]{GRanges}}, \code{\link[GenomicRanges]{findOverlaps}}, \code{\link[GenomicRanges]{reduce}}
+#' @seealso `\link[GenomicRanges]{GRanges}`, `\link[GenomicRanges]{findOverlaps}`, `\link[GenomicRanges]{reduce}`
 #' @export
 add_is_coding_by_ens_gtf <- function(gtf_path, as_list) {
   # 1. Read GTF and keep only CDS lines
@@ -1054,7 +1057,7 @@ add_is_coding_by_ens_gtf <- function(gtf_path, as_list) {
   ol_within <- GenomicRanges::findOverlaps(seg_gr, cds_gr, type = "within", ignore.strand = FALSE)
 
 
-  # 6. Initialize coding status
+  # 6. Initialise coding status
   n_segs <- length(seg_gr)
   cod_stat <- rep("n", n_segs)
 

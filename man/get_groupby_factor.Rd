@@ -4,7 +4,7 @@
 \alias{get_groupby_factor}
 \title{Determine grouping factor from a data.frame or SummarizedExperiment}
 \usage{
-get_groupby_factor(x, groupby, sep = DELIMETER)
+get_groupby_factor(x, groupby, sep = DELIMITER)
 }
 \arguments{
 \item{x}{Either a \code{SummarizedExperiment} (in which case its \code{colData()} is used) or a \code{data.frame} whose rows correspond to samples/pseudobulks.}
@@ -15,7 +15,7 @@ get_groupby_factor(x, groupby, sep = DELIMETER)
 \item A character scalar or vector of column names in \code{x}: those columns are pasted (row‐wise) with a delimiter to form the grouping factor.
 }}
 
-\item{sep}{Character string used to separate pasted values when \code{groupby} is multiple column names. Default is \code{"\$"}.}
+\item{sep}{Character string used to separate pasted values when \code{groupby} is multiple column names. Default is \code{"\\$"}.}
 }
 \value{
 A character vector (or factor) of length \code{nrow(x)}, representing the grouping factor.
@@ -49,5 +49,5 @@ print(grp3)
 
 }
 \seealso{
-\code{\link{filter_segments_and_samples}}, \code{\link{test_all_groups_as}}
+\verb{\link{filter_segments_and_samples}}, \verb{\link{test_all_groups_as}}
 }

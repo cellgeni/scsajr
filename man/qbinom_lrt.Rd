@@ -32,12 +32,12 @@ Given a fitted \code{glm(..., family = "quasibinomial")}, this function computes
 \enumerate{
 \item If \code{disp_param} is \code{NULL}, we take \code{summary(fit_obj)$dispersion} as the overdispersion estimate.
 If the model has zero residual degrees of freedom, dispersion cannot be estimated; in that case, we return \code{NA} for dispersion and issue a warning (unless \code{overdisp = FALSE}).
-\item We set \code{disp_used = max(1, <disp_estimate>)} so that the effective dispersion is at least 1. If \code{overdisp = FALSE}, we force \code{disp_used = 1}.
-\item We then call \code{\link[stats]{anova}(fit_obj, test = "Chisq", dispersion = disp_used)}.
+\item We set \verb{disp_used = max(1, <disp_estimate>)} so that the effective dispersion is at least 1. If \code{overdisp = FALSE}, we force \code{disp_used = 1}.
+\item We then call \verb{\link[stats]\{anova\}(fit_obj, test = "Chisq", dispersion = disp_used)}.
 The p‐values for each term appear in column 5 of the ANOVA table.
 \item If any error occurs when computing the ANOVA, we return \code{rep(NA, length(term_labels) + 1)}.
 }
 }
 \seealso{
-\code{\link{fit_as_glm}}, \code{\link[stats]{anova}}, \code{\link[stats]{glm}}
+\verb{\link{fit_as_glm}}, \verb{\link[stats]\{anova\}}, \verb{\link[stats]\{glm\}}
 }

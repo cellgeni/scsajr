@@ -42,7 +42,7 @@ The effective minimum samples per segment is \code{max(seg_min_samples, ncol(pba
 
 \item{groupby}{Either (a) a character vector of length \code{ncol(pbas)} giving an existing grouping factor for each column, or
 (b) a character scalar or vector of column names in \code{colData(pbas)} whose pasted‐together values define the grouping factor.
-See \code{\link{get_groupby_factor}} for details.}
+See \verb{\link{get_groupby_factor}} for details.}
 }
 \value{
 A filtered \code{SummarizedExperiment}, containing only those pseudobulks and segments that satisfy all criteria.

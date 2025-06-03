@@ -13,12 +13,12 @@ select_all_markers(
 )
 }
 \arguments{
-\item{markers}{A list containing numeric matrics \code{pv}, \code{fdr}, and \code{dpsi},
+\item{markers}{A list containing numeric matrices \code{pv}, \code{fdr}, and \code{dpsi},
 each a matrix with rows = segments and columns = group labels (as returned by \code{find_marker_as()}).
 \describe{
 \item{\code{markers$pv}}{Matrix of raw p‐values, dimensions: ∣segments∣ × ∣groups∣.}
 \item{\code{markers$fdr}}{Matrix of Benjamini‐Hochberg adjusted FDR p‐values, same dimensions.}
-\item{\code{markers$dpsi}}{Matrix of delta‐PSI (mean PSI(group) – mean PSI(others)), same dimensions.}
+\item{\code{markers$dpsi}}{Matrix of delta‐PSI (mean PSI(group) - mean PSI(others)), same dimensions.}
 }}
 
 \item{all_celltype_df}{A data.frame (rownames = segment IDs) (output of \code{test_all_groups_as()}), containing columns:
@@ -71,5 +71,5 @@ For each group, among combined rows (priority first), keep at most \code{n} segm
 }
 }
 \seealso{
-\code{\link{select_markers}}, \code{\link{select_markers_from_all_celltype_test}}
+\verb{\link{select_markers}}, \verb{\link{select_markers_from_all_celltype_test}}
 }

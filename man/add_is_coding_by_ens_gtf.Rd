@@ -39,7 +39,7 @@ It also flags whether the segment’s gene has at least one coding overlap.
 }
 \details{
 \enumerate{
-\item Read the GTF file via \code{read.table(gtf_path, sep = "\t", header = FALSE, comment.char = "#")} and
+\item Read the GTF file via \code{read.table(gtf_path, sep = "\\t", header = FALSE, comment.char = "#")} and
 filter to rows where the second column (\code{feature}) == "CDS".
 Keep columns: \code{chr_id}, \code{start}, \code{stop}, \code{strand}.
 \item Force CDS entries to a \code{GRanges} using \code{GenomicRanges::GRanges()}.
@@ -49,7 +49,7 @@ Keep columns: \code{chr_id}, \code{start}, \code{stop}, \code{strand}.
 \item Reduce the CDS ranges per chromosome/strand to merge overlapping exons (via \code{reduce()}).
 \item Build a \code{GRanges} for all segments from \code{as_list$seg}, using \code{chr_id}, \code{start}, \code{stop}, and \code{strand}.
 \item Use \code{findOverlaps(seg_gr, cds_gr, type = "any")} to find any overlap, and \code{findOverlaps(seg_gr, cds_gr, type = "within")} to find full containment.
-\item Initialize \code{cod = 'n'} for all segments. For indices in the "any" overlap set, set \code{cod = 'p'}. For indices in the "within" set, set \code{cod = 'c'}.
+\item Initialise \code{cod = 'n'} for all segments. For indices in the "any" overlap set, set \code{cod = 'p'}. For indices in the "within" set, set \code{cod = 'c'}.
 \item Determine \code{cod.gene} by marking as \code{TRUE} any segment whose \code{gene_id} appears among those with \code{cod != 'n'}.
 }
 }
@@ -61,5 +61,5 @@ Keep columns: \code{chr_id}, \code{start}, \code{stop}, \code{strand}.
 }
 }
 \seealso{
-\code{\link[GenomicRanges]{GRanges}}, \code{\link[GenomicRanges]{findOverlaps}}, \code{\link[GenomicRanges]{reduce}}
+\verb{\link[GenomicRanges]\{GRanges\}}, \verb{\link[GenomicRanges]\{findOverlaps\}}, \verb{\link[GenomicRanges]\{reduce\}}
 }

@@ -16,7 +16,7 @@ Rows correspond to segment IDs; columns correspond to samples/pseudobulks.}
 \item A vector of length \code{ncol(pbas)} that directly gives a group label for each column, or
 \item One or more column names in \code{colData(pbas)}, whose values (pasted together if multiple) define the grouping factor.
 }
-See \code{\link{get_groupby_factor}} for details.}
+See \verb{\link{get_groupby_factor}} for details.}
 
 \item{parallel}{Logical; if \code{TRUE}, fit per‐segment GLMs in parallel (requires a registered \code{plyr} backend). Default \code{FALSE}.}
 }
@@ -40,11 +40,11 @@ It returns a data.frame of p‐values, adjusted FDR, and delta‐PSI for each se
 \enumerate{
 \item Converts \code{groupby} into a single grouping vector \code{group_factor} via \code{get_groupby_factor()}.
 \item Calls \code{fit_as_glm()} with formula \code{x ~ group}, where \code{x} is the per‐segment \code{cbind(i,e)}.
-\item Extracts raw p‐values for the \code{group} term, adjusts them (Benjamini–Hochberg) into \code{group_fdr}.
+\item Extracts raw p‐values for the \code{group} term, adjusts them (Benjamini-Hochberg) into \code{group_fdr}.
 \item Computes delta‐PSI (\code{dpsi}), \code{low_state}, and \code{high_state} for each segment via \code{get_dpsi()}.
 \item Combine results (endure matching row order)
 }
 }
 \seealso{
-\code{\link{fit_as_glm}}, \code{\link{get_groupby_factor}}, \code{\link{get_dpsi}}, \code{\link{test_pair_as}}
+\verb{\link{fit_as_glm}}, \verb{\link{get_groupby_factor}}, \verb{\link{get_dpsi}}, \verb{\link{test_pair_as}}
 }

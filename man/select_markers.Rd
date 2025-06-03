@@ -13,12 +13,12 @@ select_markers(
 )
 }
 \arguments{
-\item{markers}{A list containing numeric matrics \code{pv}, \code{fdr}, and \code{dpsi},
+\item{markers}{A list containing numeric matrices \code{pv}, \code{fdr}, and \code{dpsi},
 each a matrix with rows = segments and columns = group labels (as returned by \code{find_marker_as()}).
 \describe{
 \item{\code{markers$pv}}{Matrix of raw p‐values, dimensions: ∣segments∣ × ∣groups∣.}
 \item{\code{markers$fdr}}{Matrix of Benjamini‐Hochberg adjusted FDR p‐values, same dimensions.}
-\item{\code{markers$dpsi}}{Matrix of delta‐PSI (mean PSI(group) – mean PSI(others)), same dimensions.}
+\item{\code{markers$dpsi}}{Matrix of delta‐PSI (mean PSI(group) - mean PSI(others)), same dimensions.}
 }}
 
 \item{n}{Integer: maximum number of markers to return per cell type (default: 5).}
@@ -53,7 +53,7 @@ For each group (column) in \code{markers$fdr}, the function:
 \enumerate{
 \item Identifies segments \code{seg} satisfying
 \code{markers$fdr[seg, group] <= fdr_thr} and
-\code{|markers$dpsi[seg, group]| >= dpsi_thr}.
+\verb{|markers$dpsi[seg, group]| >= dpsi_thr}.
 \item If at least one segment passes, constructs a temporary data.frame \code{t} containing
 \code{pv = markers$pv[seg, group]},
 \code{fdr = markers$fdr[seg, group]},
@@ -64,7 +64,7 @@ For each group (column) in \code{markers$fdr}, the function:
 \item Appends these rows to an aggregate \code{res} data.frame.
 }
 If \code{clean_duplicates = TRUE}, it then splits \code{res} by \code{seg_id} and retains only the row
-where \code{|dpsi|} is maximal across groups, removing duplicates.
+where \code{abs(dpsi)} is maximal across groups, removing duplicates.
 Finally, it re‐orders \code{res} by \code{abs(dpsi)} in descending order and returns it.
 }
 \examples{
@@ -77,5 +77,5 @@ head(df)
 
 }
 \seealso{
-\code{\link{find_marker_as}}, \code{\link{test_all_groups_as}}, \code{\link{test_pair_as}}
+\verb{\link{find_marker_as}}, \verb{\link{test_all_groups_as}}, \verb{\link{test_pair_as}}
 }

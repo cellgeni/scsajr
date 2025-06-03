@@ -16,7 +16,7 @@ Rows correspond to segments; columns correspond to samples/pseudobulks.}
 \item A vector of length \code{ncol(pbas)} that directly gives a group label for each column, or
 \item One or more column names in \code{colData(pbas)}, whose values (pasted together if multiple) define the grouping factor.
 }
-See \code{\link{get_groupby_factor}} for details.}
+See \verb{\link{get_groupby_factor}} for details.}
 
 \item{parallel}{Logical; if \code{TRUE}, fit per‐segment GLMs in parallel (requires a registered \code{plyr} backend). Default \code{FALSE}.}
 
@@ -26,8 +26,8 @@ See \code{\link{get_groupby_factor}} for details.}
 A list with three elements:
 \describe{
 \item{pv}{Matrix: Raw p‐values, with rows = segments, columns = group labels}
-\item{fdr}{Matrix: Benjamini–Hochberg FDR (across all segments)}
-\item{dpsi}{Matrix: Delta‐PSI (mean PSI(group) – mean PSI(others)) per segment}
+\item{fdr}{Matrix: Benjamini-Hochberg FDR (across all segments)}
+\item{dpsi}{Matrix: Delta‐PSI (mean PSI(group) - mean PSI(others)) per segment}
 }
 Row names of each matrix are \code{rownames(pbas)}; column names are the unique groups.
 }
@@ -45,11 +45,11 @@ It returns p‐values and delta‐PSI matrices (segments × groups).
 \item Creates a binary factor \code{f} where \code{f == TRUE} if sample’s group == \code{group}, FALSE otherwise.
 \item Calls \code{fit_as_glm()} with \code{formula = x ~ f} and \code{data_terms = list(f = f)}, requesting p‐values (\code{return_pv = TRUE}).
 \item Extracts the “group” p‐value column (corresponding to \code{f}) for each segment and stores in \code{pv[, group]}.
-\item Computes \code{dpsi[, group]} as \code{mean(psi[segment, f]) – mean(psi[segment, !f])}.
-   }
-\item Adjusts each column of \code{pv} by Benjamini–Hochberg into \code{fdr[, group]}.
+\item Computes \code{dpsi[, group]} as \code{mean(psi[segment, f]) - mean(psi[segment, !f])}.
+}
+\item Adjusts each column of \code{pv} by Benjamini-Hochberg into \code{fdr[, group]}.
 }
 }
 \seealso{
-\code{\link{fit_as_glm}}, \code{\link{get_groupby_factor}}, \code{\link{calc_psi}}
+\verb{\link{fit_as_glm}}, \verb{\link{get_groupby_factor}}, \verb{\link{calc_psi}}
 }
