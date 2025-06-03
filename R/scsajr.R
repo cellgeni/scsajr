@@ -1334,3 +1334,109 @@ pseudobulk_metadata <- function(
 
   return(combined_meta)
 }
+
+
+#' Construct a SummarizedExperiment from raw segment data and metadata
+#'
+#' Given a list containing segment coordinate data (`seg`) and assay matrices (`i`, `e`, etc.),
+#'  this function builds a `SummarizedExperiment` by:
+#' 1. Extracting `seg` (a data.frame of segment attributes) and using its columns to create
+#'    `rowRanges` (`GRanges`) with genomic coordinates and metadata.
+#' 2. Taking the remaining list elements as assays (each must be a matrix with rows matching `rownames(seg)`).
+#' 3. Incorporating provided column metadata `col_data` as `colData`.
+#'
+#' @param data_list A list with at least one element named `seg`, where:
+#'   - `data_list$seg` is a data.frame with columns:
+#'     - `chr_id` (chromosome names matching those in the assays’ row names),
+#'     - `start` (numeric start coordinate),
+#'     - `stop` (numeric end coordinate),
+#'     - `strand` (numeric code: `1` for '+', `-1` for '-', or `NA`/other for '*'),
+#'     - plus any additional per‐segment metadata columns.
+#'   - All other list elements are assay matrices (e.g., `i`, `e`, `counts`) whose row names
+#'     match `rownames(data_list$seg)` and whose column names match `rownames(col_data)`.
+#' @param col_data A data.frame of column‐level metadata, where each row corresponds to a column
+#'   of the resulting `SummarizedExperiment`. Row names of `col_data` must match the column names
+#'   of each assay matrix provided in `data_list`.
+#'
+#' @return A `SummarizedExperiment` with:
+#'  \itemize{
+#'   \item `assays`: each list element of `data_list` (except `seg`) becomes an assay, with its matrix data.
+#'   \item `rowRanges`: a `GRanges` object constructed from `data_list$seg`, with ranges given by
+#'     `chr_id`, `start`, `stop`, `strand` (converted to `'+'`, `'-'`, or `'*'`), and additional
+#'      metadata columns stored in `elementMetadata(rowRanges)`.
+#'   \item `colData`: set to the provided `col_data`.
+#'  }
+#'
+#' @examples
+#' \dontrun{
+#' # Example 'raw_list' structure:
+#' raw_list <- list(
+#'   seg = data.frame(
+#'     chr_id = c("chr1", "chr1"),
+#'     start = c(100000, 200000),
+#'     stop = c(100100, 200100),
+#'     strand = c(1, -1),
+#'     gene_id = c("GENE1", "GENE2"),
+#'     row.names = c("SEG1", "SEG2"),
+#'     stringsAsFactors = FALSE
+#'   ),
+#'   i = matrix(1:4, nrow = 2, dimnames = list(c("SEG1", "SEG2"), c("S1", "S2"))),
+#'   e = matrix(5:8, nrow = 2, dimnames = list(c("SEG1", "SEG2"), c("S1", "S2")))
+#' )
+#' col_metadata <- data.frame(
+#'   sample_id = c("S1", "S2"),
+#'   celltype = c("A", "B"),
+#'   row.names = c("S1", "S2"),
+#'   stringsAsFactors = FALSE
+#' )
+#'
+#' se_obj <- make_summarized_experiment(raw_list, col_metadata)
+#' }
+#'
+#' @seealso \code{\link[GenomicRanges]{GRanges}}, \code{\link[SummarizedExperiment]{SummarizedExperiment}}
+#' @export
+make_summarized_experiment <- function(data_list, col_data) {
+  # 1. Extract segment data.frame and remove from list
+  seg_df <- data_list$seg
+  data_list$seg <- NULL
+
+  # 2. Build GRanges from seg_df
+  # Convert numeric strand codes to +, -, or *
+  strand_vec <- ifelse(
+    is.na(seg_df$strand),
+    "*",
+    ifelse(seg_df$strand == 1, "+",
+      ifelse(seg_df$strand == -1, "-", "*")
+    )
+  )
+  # Create GRanges; feature_id slot holds the row names of seg_df
+  row_ranges <- GenomicRanges::GRanges(
+    seqnames = seg_df$chr_id,
+    ranges = IRanges::IRanges(start = seg_df$start, end = seg_df$stop),
+    strand = strand_vec,
+    feature_id = rownames(seg_df)
+  )
+
+  # 3. Remove coordinate columns from seg_df, leaving only per‐segment metadata
+  meta_cols <- seg_df
+  meta_cols$chr_id <- NULL
+  meta_cols$start <- NULL
+  meta_cols$stop <- NULL
+  meta_cols$strand <- NULL
+
+  # Attach remaining columns as elementMetadata on row_ranges
+  S4Vectors::elementMetadata(row_ranges) <- meta_cols
+
+  # 4. The remaining items in data_list are assays; ensure each is a matrix
+  assay_list <- data_list
+  #   (Assume user provided correct matrix dimensions and row names match seg_df)
+
+  # 5. Construct and return SummarizedExperiment
+  se_obj <- SummarizedExperiment::SummarizedExperiment(
+    assays    = assay_list,
+    rowRanges = row_ranges,
+    colData   = col_data
+  )
+
+  return(se_obj)
+}
