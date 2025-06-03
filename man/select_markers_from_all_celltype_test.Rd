@@ -11,7 +11,7 @@ select_markers_from_all_celltype_test(
 )
 }
 \arguments{
-\item{all_celltype_df}{A data.frame (rownames = segment IDs), containing columns:
+\item{all_celltype_df}{A data.frame (rownames = segment IDs) (output of \code{test_all_groups_as()}), containing columns:
 \describe{
 \item{overdispersion}{Estimated dispersion from each segment’s GLM.}
 \item{group}{Raw p‐value from the likelihood‐ratio test for the \code{group} term.}

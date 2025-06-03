@@ -663,7 +663,7 @@ find_marker_as <- function(
 #'   this function selects only those segments that pass both a group‐level FDR threshold and a minimum delta‐PSI threshold.
 #' It returns a data.frame with one row per qualifying segment.
 #'
-#' @param all_celltype_df A data.frame (rownames = segment IDs), containing columns:
+#' @param all_celltype_df A data.frame (rownames = segment IDs) (output of \code{test_all_groups_as()}), containing columns:
 #'   \describe{
 #'     \item{overdispersion}{Estimated dispersion from each segment’s GLM.}
 #'     \item{group}{Raw p‐value from the likelihood‐ratio test for the \code{group} term.}
@@ -844,4 +844,112 @@ select_markers <- function(
   }
 
   return(result)
+}
+
+
+#' Select combined marker segments from per‐group and all‐groups tests
+#'
+#' This function merges two sets of marker results:
+#'   1. Per‐group markers (output of \code{select_markers}): segments deemed significant in one‐vs‐rest tests.
+#'   2. All‐groups markers (output of \code{select_markers_from_all_celltype_test}): segments significant across all groups.
+#'
+#' For each group, it prioritizes segments identified by one‐vs‐rest tests; any segment not already selected but significant in the all‐groups test is labeled as a “background” marker.
+#' The result contains at most \code{n} segments per group, with ties broken by largest |dpsi|.
+#'
+#' @param markers A list containing numeric matrics \code{pv}, \code{fdr}, and \code{dpsi},
+#'   each a matrix with rows = segments and columns = group labels (as returned by \code{find_marker_as()}).
+#'   \describe{
+#'     \item{\code{markers$pv}}{Matrix of raw p‐values, dimensions: ∣segments∣ × ∣groups∣.}
+#'     \item{\code{markers$fdr}}{Matrix of Benjamini‐Hochberg adjusted FDR p‐values, same dimensions.}
+#'     \item{\code{markers$dpsi}}{Matrix of delta‐PSI (mean PSI(group) – mean PSI(others)), same dimensions.}
+#'   }
+#' @param all_celltype_df A data.frame (rownames = segment IDs) (output of \code{test_all_groups_as()}), containing columns:
+#'   \describe{
+#'     \item{overdispersion}{Estimated dispersion from each segment’s GLM.}
+#'     \item{group}{Raw p‐value from the likelihood‐ratio test for the \code{group} term.}
+#'     \item{group_fdr}{Benjamini‐Hochberg adjusted FDR (across all segments).}
+#'     \item{low_state}{Group label with lowest mean PSI (from \code{get_dpsi()}).}
+#'     \item{high_state}{Group label with highest mean PSI.}
+#'     \item{dpsi}{Difference in mean PSI between \code{high_state} and \code{low_state}.}
+#'   }
+#' @param n Integer: maximum number of markers to return per cell type (after combining) (default: \code{Inf} (no limit)).
+#' @param fdr_thr Numeric: false discovery rate cutoff (default: 0.05).
+#' @param dpsi_thr Numeric: minimum absolute delta PSI cutoff (default: 0.1).
+#'
+#' @return A data.frame with one row per selected segment, containing:
+#'   \describe{
+#'     \item{\code{pv}}{Raw p‐value (from either per‐group or all‐groups test).}
+#'     \item{\code{fdr}}{Adjusted FDR (from the same test).}
+#'     \item{\code{dpsi}}{Delta‐PSI (for the group that nominated this segment).}
+#'     \item{\code{seg_id}}{Segment IDs (rownames).}
+#'     \item{\code{group}}{Group label for which the segment is selected.}
+#'     \item{\code{is_marker}}{Logical: \code{TRUE} if selected by the per‐group test, \code{FALSE} if only from the all‐groups test.}
+#'   }
+#'   Row names are the segment IDs. Rows are ordered within each group by descending |dpsi| and limited to \code{n} per group.
+#'
+#' @details
+#' 1. Per‐group markers (priority):
+#'    Call \code{select_markers(markers, n = Inf, fdr_thr = fdr_thr, dpsi_thr = dpsi_thr, clean_duplicates = TRUE)}
+#'     to gather all segments that pass thresholds in any group. Label these as \code{is_marker = TRUE}.
+#' 2. All‐groups markers (background):
+#'    Call \code{select_markers_from_all_celltype_test(all_celltype_df, fdr_thr = fdr_thr, dpsi_thr = dpsi_thr)}
+#'     to gather segments passing the all‐groups thresholds. Exclude any segment already in step 1. Label remaining as \code{is_marker = FALSE}.
+#' 3. Combine and trim:
+#'    For each group, among combined rows (priority first), keep at most \code{n} segments ranked by descending |dpsi|.
+#'
+#' @seealso \code{\link{select_markers}}, \code{\link{select_markers_from_all_celltype_test}}
+#' @export
+select_all_markers <- function(
+    markers,
+    all_celltype_df,
+    n = Inf,
+    fdr_thr = 0.05,
+    dpsi_thr = 0.1) {
+  # 1. Fetch all per‐group markers without limiting n
+  per_group_df <- select_markers(
+    markers,
+    n = Inf,
+    fdr_thr = fdr_thr,
+    dpsi_thr = dpsi_thr,
+    clean_duplicates = TRUE
+  )
+  # Add a column to flag these as true markers
+  per_group_df$is_marker <- TRUE
+
+  # 2. Fetch all‐groups background markers
+  background_df <- select_markers_from_all_celltype_test(
+    all_celltype_df,
+    fdr_thr = fdr_thr,
+    dpsi_thr = dpsi_thr
+  )
+  # Rename 'seg_id' column consistently
+  # (select_markers_from_all_celltype_test already has seg_id and group)
+  background_df$is_marker <- FALSE
+
+  # 3. Exclude any segments already in per_group_df
+  bg_keep <- setdiff(background_df$seg_id, per_group_df$seg_id)
+  background_df <- background_df[background_df$seg_id %in% bg_keep, , drop = FALSE]
+
+  # 4. Combine the two sets
+  combined <- rbind(per_group_df, background_df)
+
+  # 5. For each group, limit to top 'n' by |dpsi|
+  # Split by group
+  split_by_group <- split(combined, combined$group)
+  trimmed_list <- lapply(split_by_group, function(df_group) {
+    # Order by descending |dpsi|
+    df_group <- df_group[order(abs(df_group$dpsi), decreasing = TRUE), , drop = FALSE]
+    # Trim to at most n rows
+    if (nrow(df_group) > n) {
+      df_group <- df_group[seq_len(n), , drop = FALSE]
+    }
+    return(df_group)
+  })
+  final_df <- do.call(rbind, trimmed_list)
+  rownames(final_df) <- final_df$seg_id
+
+  # 6. Re‐order rows by group (alphabetical) then |dpsi| descending
+  final_df <- final_df[order(final_df$group, -abs(final_df$dpsi)), , drop = FALSE]
+
+  return(final_df)
 }
