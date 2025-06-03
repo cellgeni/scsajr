@@ -1254,3 +1254,83 @@ calc_cpm <- function(se) {
 
   return(as.matrix(cpm_mat))
 }
+
+
+#' Aggregate column‐level metadata for pseudobulk groups
+#'
+#' Given a data.frame of per‐cell metadata and a grouping vector, this function aggregates metadata so that each row corresponds to one group.
+#' For each group:
+#'   1. Columns that are constant within the group are retained.
+#'   2. For any column listed in `aggregate`, a summary function is applied (e.g., sum).
+#'
+#' @param meta A data.frame whose rows correspond to individual cells or samples,
+#'   and whose columns contain metadata (e.g., `sample_id`, `celltype`, `ncells`, etc.).
+#'   Row names should match column names of the corresponding `SummarizedExperiment` if applicable.
+#' @param groupby Either:
+#'   \itemize{
+#'   \item A character vector of length `nrow(meta)` giving a grouping label for each row of `meta`, or
+#'   \item One or more column names in `meta`. In that case, the values of those columns are pasted (row‐wise)
+#'          with the default delimiter to form a grouping factor via `get_groupby_factor()`.
+#'   }
+#'   After grouping, columns with the same label will be summed together.
+#'   See `get_groupby_factor()` for details on how the grouping vector is constructed.
+#' @param aggregate A named list of functions to apply to each column within each group.
+#'   For example, `list(ncells = sum, ngenes = max)` would sum the `ncells` column and take
+#'    the maximum of the `ngenes` column for each group. Default is `list(ncells = sum)`.
+#'
+#' @return A data.frame with one row per unique group. Columns include:
+#'   - Any original columns in `meta` that had the same (constant) value for all rows in that group.
+#'   - For each name in `aggregate`, a new column where the corresponding function has been applied
+#'     to that column’s values within each group.
+#'   Row names of the returned data.frame are the group labels.
+#'
+#' @examples
+#' \dontrun{
+#' # Suppose 'cell_meta' is a data.frame of 1000 cells with columns:
+#' #   sample_id, celltype, ncells, batch, library_size
+#' # We want to pseudobulk by 'celltype', summing 'ncells' and taking max 'library_size':
+#' group_meta <- pseudobulk_metadata(
+#'   meta = cell_meta,
+#'   groupby = "celltype",
+#'   aggregate = list(ncells = sum, library_size = max)
+#' )
+#' # 'group_meta' now has one row per unique celltype.
+#' }
+#'
+#' @seealso \code{\link{pseudobulk}}, \code{\link{get_groupby_factor}}
+#' @export
+pseudobulk_metadata <- function(
+    meta,
+    groupby,
+    aggregate = list(ncells = sum)) {
+  # Construct grouping factor (length = nrow(meta))
+  group_factor <- get_groupby_factor(meta, groupby)
+
+  # Split metadata by group
+  meta_split <- split(meta, group_factor)
+
+  # For each group, retain constant columns and apply aggregation functions
+  aggregated_list <- lapply(meta_split, function(df_group) {
+    # Determine which columns are constant within this group
+    unique_counts <- sapply(df_group, function(col) length(unique(col)))
+    constant_cols <- names(unique_counts)[unique_counts == 1]
+
+    # Start result with unique values of constant columns
+    result <- unique(df_group[, constant_cols, drop = FALSE])
+
+    # Apply aggregation functions to specified columns
+    for (col_name in intersect(names(aggregate), colnames(df_group))) {
+      result[, col_name] <- aggregate[[col_name]](df_group[[col_name]])
+    }
+
+    return(result)
+  })
+
+  # Determine common columns across all groups (intersection of column names)
+  common_cols <- Reduce(intersect, lapply(aggregated_list, colnames))
+
+  # Combine into a single data.frame, keeping only common columns
+  combined_meta <- do.call(rbind, lapply(aggregated_list, function(df) df[, common_cols, drop = FALSE]))
+
+  return(combined_meta)
+}
