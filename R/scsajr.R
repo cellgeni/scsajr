@@ -374,7 +374,7 @@ qbinom_lrt <- function(
 get_groupby_factor <- function(x, groupby, sep = DELIMITER) {
   # If x is SummarizedExperiment, extract its colData as a data.frame
   if ("SummarizedExperiment" %in% class(x)) {
-    x <- as.data.frame(SummarizedExperiment::colData(x))
+    x <- as.data.frame(colData(x))
   }
   # Now x must be a data.frame; number of rows = number of samples/pseudobulks
   n <- nrow(x)
