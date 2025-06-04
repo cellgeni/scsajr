@@ -1440,3 +1440,201 @@ make_summarized_experiment <- function(data_list, col_data) {
 
   return(se_obj)
 }
+
+
+#' Plot heatmaps of alternative splicing (PSI) and gene expression (CPM) for selected markers
+#'
+#' This function takes pseudobulk splicing data (`pbas`) and gene expression data (`pbge`),
+#' along with a set of marker segments, and plots two side‐by‐side heatmaps:
+#'   1. PSI values (percent spliced‐in) for each marker segment across groups.
+#'   2. CPM values (counts per million) for corresponding genes across groups.
+#'
+#' @param pbas A `SummarizedExperiment` of pseudobulk splicing data. Must contain:
+#'   - `assay(pbas, "i")` and `assay(pbas, "e")` (inclusion/exclusion counts).
+#'   - `assay(pbas, "psi")` (percent spliced‐in) or else `psi` will be calculated internally.
+#'   Rows are segment IDs; columns are group labels (matching `colData(pbas)` grouping factor).
+#' @param pbge A `SummarizedExperiment` of pseudobulk gene expression data. Must contain:
+#'   - `assay(pbge, "cpm")` (counts per million).
+#'   Rows are gene IDs; columns are group labels matching `pbas`.
+#' @param groupby A grouping label (column name in `colData(pbas)` and `colData(pbge)`)
+#'   used to aggregate and order groups. Can be a single column name or a vector of column names;
+#'   see `get_groupby_factor()` for details.
+#' @param markers A data.frame of selected marker segments. Must contain columns:
+#'   - `seg_id` (segment ID matching `rownames(pbas)`)
+#'   - `dpsi` (delta‐PSI sign and magnitude; positive means inclusion in higher group)
+#'   - `group` (group label for which this segment is a marker)
+#'   - `is_marker` (logical; `TRUE` for top per‐group markers, `FALSE` for background markers)
+#'   Optionally, `markers` may contain a column `gene_id` if plotting gene names.
+#' @param psi_scale Logical; if `TRUE`, PSI values are scaled (z‐score) per segment (column of heatmap). Default is `FALSE` (raw PSI in (0,1)).
+#' @param cpm_scale Logical; if `TRUE`, CPM values are standardized (z‐score) per gene (column of heatmap). Default is `TRUE`.
+#' @param group_colors Optional named vector mapping group labels to colors. If `NULL`, default colors are assigned via `char2col()`.
+#' @param col_palette A vector of colors (length ≥ 2) for heatmap coloring (e.g., `rev(hcl.colors(100, "RdYlBu"))`). Default is `rev(hcl.colors(100, "RdYlBu"))`.
+#' @param gene_names_col Optional character. If `markers` has a column with gene names (e.g., `"name"`),
+#'   specify it here so gene names appear in the column labels of the heatmap. Default is `NULL`.
+#' @param ... Additional arguments passed to underlying plotting functions (`imageWithText`, `plotColorLegend2`).
+#'
+#' @return Invisibly returns `NULL`. The function draws two heatmaps in the current graphics device:
+#'   - Left: PSI heatmap, with rows = groups, columns = marker segments.
+#'   - Right: CPM heatmap, with rows = groups, columns = corresponding genes.
+#'   If scaling is applied (`psi_scale` or `cpm_scale`), legends reflect z‐score ranges.
+#'
+#' @details
+#' 1. Calls `pseudobulk()` on `pbas` and `pbge` to ensure group‐level assays (`psi` and `cpm`) exist.
+#' 2. Extracts a PSI matrix (`psi_mat`) of size (n_groups × n_markers) for `markers$seg_id`.
+#'    - If `markers$dpsi` is negative, flips PSI to `1 − PSI` so that all markers align directionally.
+#' 3. Determines group ordering via classical Multidimensional Scaling (MDS) on `psi_mat` correlations, so that similar groups cluster together.
+#' 4. Reorders `markers` by `markers$group` matching MDS order, then by `dpsi`.
+#' 5. Extracts CPM matrix (`cpm_mat`) of size (n_groups × n_genes) for genes corresponding to `markers$seg_id`.
+#'    - If `gene_names_col` is provided, column names become `paste0(gene_name, ":", seg_id)`.
+#' 6. Scales `psi_mat` and/or `cpm_mat` if requested (`psi_scale`, `cpm_scale`).
+#' 7. Prepares row annotations (`row_anns`) with:
+#'    - `ct`: group label
+#'    - `is_marker`: color `gray`/`white` for `TRUE`/`FALSE`
+#'    - `psi_flipped`: whether a marker’s `dpsi < 0` (flipped direction; same gray/white legend).
+#' 8. Draws two heatmaps side‐by‐side:
+#'    - **PSI heatmap**: calls `imageWithText()` with `psi_mat`, coloring by `col_palette`, showing `ct` annotation.
+#'    - **PSI legend**: if `psi_scale = FALSE`, calls `plotColorLegend2()` to display color scale (0,1) or z‐score limits.
+#'    - **CPM heatmap**: calls `imageWithText()` with `cpm_mat`, similar annotations.
+#'    - **CPM legend**: calls `plotColorLegend2()` to show z‐score or raw CPM scale.
+#'
+#' @seealso \code{\link{pseudobulk}}, \code{\link{calc_psi}}, \code{\link{calc_cpm}}, \code{\link{get_groupby_factor}}
+#' @export
+marker_heatmap <- function(
+    pbas,
+    pbge,
+    groupby,
+    markers,
+    psi_scale = FALSE,
+    cpm_scale = TRUE,
+    group_colors = NULL,
+    col_palette = rev(grDevices::hcl.colors(100, "RdYlBu")),
+    gene_names_col = NULL,
+    ...) {
+  # 1. Ensure pseudobulk assays exist
+  as_pb <- pseudobulk(pbas, groupby, clean_derivatives = c("psi", "cpm"))
+  if (!("psi" %in% SummarizedExperiment::assayNames(as_pb))) {
+    SummarizedExperiment::assay(as_pb, "psi") <- calc_psi(as_pb)
+  }
+  ge_pb <- pseudobulk(pbge, groupby, clean_derivatives = c())
+  if ("counts" %in% SummarizedExperiment::assayNames(ge_pb)) {
+    SummarizedExperiment::assay(ge_pb, "cpm") <- calc_cpm(ge_pb)
+  }
+
+  # 2. Extract PSI matrix for marker segments
+  psi <- t(SummarizedExperiment::assay(as_pb, "psi")[markers$seg_id, , drop = FALSE])
+  # Flip PSI for markers with negative dpsi
+  psi[, markers$dpsi < 0] <- 1 - psi[, markers$dpsi < 0]
+
+  # If is_marker is missing, default to TRUE
+  if (is.null(markers$is_marker)) {
+    markers$is_marker <- TRUE
+  }
+
+  # 3. Determine group ordering via MDS on PSI correlations
+  cor_mat <- stats::cor(t(psi), use = "pairwise.complete.obs")
+  cor_mat[is.na(cor_mat)] <- 0
+  mds_coords <- stats::cmdscale(1 - cor_mat, k = 1)
+  groups <- rownames(psi)[order(mds_coords[, 1])]
+
+  # 4. Reorder markers by group (matching MDS order), then by group factor
+  markers <- markers[order(markers$group), ]
+  markers <- markers[order(match(markers$group, groups)), ]
+  psi <- psi[groups, markers$seg_id, drop = FALSE]
+
+  # 5. Extract CPM matrix for genes corresponding to segments
+  gids <- SummarizedExperiment::rowData(as_pb)[rownames(markers), "gene_id"]
+  cpm <- t(SummarizedExperiment::assay(ge_pb, "cpm")[gids, rownames(psi), drop = FALSE])
+  if (!is.null(gene_names_col)) {
+    gene_names <- S4Vectors::elementMetadata(SummarizedExperiment::rowRanges(ge_pb))[gids, gene_names_col]
+    colnames(cpm) <- paste0(gene_names)
+    colnames(psi) <- paste0(colnames(cpm), ":", colnames(psi))
+  }
+
+  # 6. Determine colorscales
+  psi_zlim <- c(0, 1)
+  if (psi_scale) {
+    psi <- apply(psi, 2, visutils::scaleTo)
+    psi_zlim <- NULL
+  }
+  cpm_zlim <- range(cpm, na.rm = TRUE)
+  if (cpm_scale) {
+    cpm <- scale(cpm)
+    max_abs <- max(abs(cpm), na.rm = TRUE)
+    cpm_zlim <- c(-max_abs, max_abs)
+  }
+
+  # 7. Prepare row annotations
+  row_anns <- list(
+    ct = markers$group,
+    is_marker = as.character(markers$is_marker),
+    psi_flipped = as.character(markers$dpsi < 0)
+  )
+  log2col <- c("TRUE" = "gray", "FALSE" = "white")
+  row_ann_cols <- list(
+    ct = if (is.null(group_colors)) visutils::char2col(rownames(psi)) else group_colors,
+    is_marker = log2col,
+    psi_flipped = log2col
+  )
+
+  # 8. Plot side-by-side with layout
+  graphics::layout(matrix(c(rep(1, nrow(psi)), rep(2, nrow(psi))), ncol = 2, byrow = FALSE),
+    widths = c(1, 1)
+  )
+  graphics::par(
+    bty = "n", tcl = -0.2, mgp = c(1.3, 0.3, 0), mar = c(0, 0.5, 0, 0),
+    oma = c(6, 34, 3, 1), xpd = NA
+  )
+
+  # 8a. PSI heatmap
+  xaxlab <- rownames(psi)
+  if (graphics::par("mfrow")[1] == 2) xaxlab <- NULL
+  visutils::imageWithText(
+    psi,
+    "",
+    colAnns = list(ct = rownames(psi)),
+    rowAnns = row_anns,
+    colAnnCols = list(ct = row_ann_cols$ct),
+    rowAnnCols = row_ann_cols,
+    xaxlab = xaxlab,
+    main = "Alternative Splicing",
+    col = col_palette,
+    zlim = psi_zlim,
+    ...
+  )
+  if (!psi_scale) {
+    visutils::plotColorLegend2(
+      graphics::grconvertX(1.02, "npc", "nfc"), 1,
+      graphics::grconvertY(0.1, "npc", "nfc"),
+      graphics::grconvertY(0.9, "npc", "nfc"),
+      fullzlim = psi_zlim, zlim = psi_zlim,
+      zfun = identity,
+      z2col = function(x) visutils::num2col(x, col_palette),
+      title = "PSI"
+    )
+  }
+
+  # 8b. CPM heatmap
+  visutils::imageWithText(
+    cpm,
+    "",
+    colAnns = list(ct = rownames(psi)),
+    rowAnns = row_anns,
+    colAnnCols = list(ct = row_ann_cols$ct),
+    rowAnnCols = row_ann_cols,
+    main = "Gene Expression",
+    col = col_palette,
+    zlim = cpm_zlim,
+    ...
+  )
+  visutils::plotColorLegend2(
+    graphics::grconvertX(1.02, "npc", "nfc"), 1,
+    graphics::grconvertY(0.1, "npc", "nfc"),
+    graphics::grconvertY(0.9, "npc", "nfc"),
+    fullzlim = cpm_zlim, zlim = cpm_zlim,
+    zfun = identity,
+    z2col = function(x) visutils::num2col(x, col_palette),
+    title = ifelse(cpm_scale, "z-score", "CPM")
+  )
+
+  invisible(NULL)
+}
