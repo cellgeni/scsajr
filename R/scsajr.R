@@ -457,7 +457,7 @@ test_all_groups_as <- function(
   pv_df$group_fdr <- stats::p.adjust(pv_df$group, method = "BH")
 
   # 4. Compute delta‐PSI, low_state, high_state
-  dpsi_df <- get_dpsi(pbas, group_factor)
+  dpsi_df <- get_dpsi(pbas, group_factor, min_cov = 50)
 
   # 5. Combine results: ensure matching row order
   res <- cbind(
