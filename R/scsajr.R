@@ -168,11 +168,6 @@ fit_as_glm <- function(
     return_pv = FALSE,
     overdisp = TRUE,
     disp_param = NULL) {
-  # Ensure plyr is available
-  if (!requireNamespace("plyr", quietly = TRUE)) {
-    stop("Please install the 'plyr' package to use fit_as_glm().")
-  }
-
   # Extract term names from the formula
   term_labels <- attr(stats::terms(formula), "term.labels")
 
