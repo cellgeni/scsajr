@@ -88,7 +88,7 @@ filter_segments_and_samples <- function(
   SummarizedExperiment::assay(pbas, "e") <- as.matrix(SummarizedExperiment::assay(pbas, "e"))
 
   # 'nna' = number of pseudobulks with total coverage >= min_cov
-  SummarizedExperiment::rowData(pbas)$nna <- rowSums((SummarizedExperiment::assay(pbas, "i") + SummarizedExperiment::assay(pbas, "e")) >= min_cov)
+  SummarizedExperiment::rowData(pbas)$nna <- Matrix::rowSums((SummarizedExperiment::assay(pbas, "i") + SummarizedExperiment::assay(pbas, "e")) >= min_cov)
 
 
   ## 3. Filter out segments (rows) that do not meet minimum coverage across pseudobulks
