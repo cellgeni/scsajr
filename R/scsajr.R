@@ -2254,3 +2254,117 @@ get_plot_coords_for_seg <- function(sid, pb_all, gene_descr) {
 
   return(list(start = start_coord, stop = stop_coord))
 }
+
+
+#' Sum coverage and junction counts across a list of coverage objects
+#'
+#' Given a list of coverage objects, each containing:
+#'   - `x`: a numeric vector of genomic positions,
+#'   - `cov`: a numeric vector (or Rle) of coverage values at those positions,
+#'   - `juncs`: a data.frame of junctions with at least three coordinate columns and a `score` column,
+#' this function merges them by:
+#'   1. Summing the coverage vectors (`cov`) across all objects (requires identical `x`).
+#'   2. Constructing a union of all junction coordinates (first three columns of each `juncs`),
+#'      initializing scores to zero, then adding each object’s `juncs$score` into the union table.
+#'
+#' @param cov_list A list of coverage objects. Each object must be a list with components:
+#'   - `x`: a numeric vector of positions (shared across all objects),
+#'   - `cov`: a numeric vector (or Rle) of coverage for those positions,
+#'   - `juncs`: a data.frame with row names identifying junction IDs, at least three coordinate columns,
+#'     and a numeric `score` column.
+#'
+#' @return A single coverage object (list) with the same structure as the inputs:
+#'   - `x`: the shared positions vector,
+#'   - `cov`: the summed coverage across all inputs,
+#'   - `juncs`: a data.frame containing the union of all junction coordinate rows
+#'     (first three columns) and a `score` column summing scores from each input.
+#'
+#' @details
+#' 1. Single‐element shortcut
+#'    If `length(cov_list) == 1`, the function simply returns `cov_list[[1]]` without modification.
+#'
+#' 2. Initialization
+#'    Let `r` be a copy of the first coverage object, i.e. the element at index 1 of `cov_list`.
+#'    Extract its `x`, `cov`, and `juncs` components for later aggregation.
+#'
+#' 3. Build the union of all junction coordinates
+#'    - For each coverage object in `cov_list`, take the first three columns of its `juncs` data.frame.
+#'    - Row‐bind them all together and then apply `unique()` to get every distinct coordinate triple.
+#'    - Store these unique triples in a new data.frame called `all_juncs` and set `all_juncs$score <- 0`.
+#'
+#' 4. Accumulate scores from the first object
+#'    - Match the row names of `r$juncs` against the row names of `all_juncs`.
+#'    - For each matching row, add `r$juncs$score` into `all_juncs$score`.
+#'
+#' 5. Loop over remaining coverage objects
+#'    For each `current` in `cov_list[2:length(cov_list)]`:
+#'    - Coverage sum
+#'      Check that `identical(r$x, current$x)`. If not, stop with an error. Otherwise, do
+#'      ```r
+#'      r$cov <- r$cov + current$cov
+#'      ```
+#'    - Junction score sum
+#'      For each junction ID (row name) in `current$juncs`, locate the matching row in `all_juncs`
+#'      (by shared row name). If found, add `current$juncs$score` to `all_juncs$score` at that row.
+#'      Junctions that do not appear in `current$juncs` simply contribute zero.
+#'
+#' 6. Finalize
+#'    After processing all objects, assign `r$juncs <- all_juncs` and return `r`.
+#'
+#' @export
+sum_covs <- function(cov_list) {
+  # If only one element, return it directly
+  if (length(cov_list) == 1) {
+    return(cov_list[[1]])
+  }
+
+  # 1. Initialize result as a deep copy of the first coverage object
+  r <- cov_list[[1]]
+
+  # 2. Build a data.frame of all unique junction coordinates (first three columns)
+  #    across all coverage objects
+  all_coords_list <- lapply(cov_list, function(cov_obj) {
+    cov_obj$juncs[, 1:3, drop = FALSE]
+  })
+  all_juncs <- unique(do.call(rbind, all_coords_list))
+  # Ensure row names of all_juncs match original junction IDs if present
+  # We'll use the original row names from r$juncs for those rows that match exactly.
+  # But to maintain compatibility, we'll set row names to the coordinate string.
+  rownames(all_juncs) <- apply(all_juncs, 1, function(row) paste(row, collapse = ":"))
+
+  # 3. Initialize scores to zero
+  all_juncs$score <- rep(0, nrow(all_juncs))
+
+  # 4. Add scores from the first object
+  #    Map r$juncs rows into all_juncs
+  #    If r$juncs row names differ from the coordinate-based rownames(all_juncs),
+  #    assume rownames(r$juncs) match the coordinate paste
+  matching_r <- intersect(rownames(all_juncs), rownames(r$juncs))
+  if (length(matching_r) > 0) {
+    all_juncs[matching_r, "score"] <-
+      all_juncs[matching_r, "score"] + r$juncs[matching_r, "score"]
+  }
+
+  # 5. Loop over remaining coverage objects
+  for (i in seq(2, length(cov_list))) {
+    current <- cov_list[[i]]
+    # Verify coverage positions match
+    if (!identical(r$x, current$x)) {
+      stop("Coverage positions do not match between objects.")
+    }
+    # Sum coverage
+    r$cov <- r$cov + current$cov
+
+    # Sum junction scores: map current$juncs rows into all_juncs
+    matching_c <- intersect(rownames(all_juncs), rownames(current$juncs))
+    if (length(matching_c) > 0) {
+      all_juncs[matching_c, "score"] <-
+        all_juncs[matching_c, "score"] + current$juncs[matching_c, "score"]
+    }
+  }
+
+  # 6. Assign updated junction table back to r$juncs
+  r$juncs <- all_juncs
+
+  return(r)
+}
