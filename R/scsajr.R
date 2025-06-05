@@ -2184,3 +2184,73 @@ cast_xy_table <- function(x, y, i) {
 
   return(m)
 }
+
+
+#' Determine genomic plotting coordinates for a segment with flanking exons
+#'
+#' Given a segment ID (`sid`), a pseudobulk `SummarizedExperiment` (`pb_all`), and a gene annotation data.frame (`gene_descr`),
+#'  this function finds the closest “constant” upstream and downstream exons (using `find_nearest_constant_exons()`)
+#'  and returns a plotting window that extends from 50 bp upstream of the upstream exon start
+#'  (or gene start if none) to 50 bp upstream of the downstream exon end (or gene end if none).
+#'
+#' @param sid Character scalar; the segment ID (rownames of `pb_all`) to center the plot on.
+#' @param pb_all A `SummarizedExperiment` of pseudobulk splicing data. Its `rowRanges(pb_all)`
+#'   must include `gene_id`, `start`, `end`, and `strand`.
+#' @param gene_descr A data.frame with gene annotations, where:
+#'   - Row names are gene IDs,
+#'   - Columns include `start` (gene start coordinate) and `end` (gene end coordinate).
+#'
+#' @return A named list with two numeric elements:
+#'   - `start`: the genomic coordinate to begin plotting,
+#'   - `stop`: the genomic coordinate to end plotting.
+#'   If no upstream exon is found, `start` is the gene start; if no downstream exon is found, `stop` is the gene end.
+#'
+#' @details
+#' 1. Uses `find_nearest_constant_exons(pb_all, sid)` to get:
+#'     - `up`: ID of the nearest upstream constant exon (or `NA`),
+#'     - `down`: ID of the nearest downstream constant exon (or `NA`).
+#' 2. Extracts `gene_id` for `sid` from `rowRanges(pb_all)`.
+#' 3. If `up` is not `NA`, sets
+#'      `start = start(rowRanges(pb_all)[up, ]) - 50`
+#'    otherwise,
+#'      `start = gene_descr[gene_id, "start"]`.
+#' 4. If `down` is not `NA`, sets
+#'      `stop = end(rowRanges(pb_all)[down, ]) - 50`
+#'    otherwise,
+#'      `stop = gene_descr[gene_id, "end"]`.
+#' 5. Returns the two values as a named list.
+#'
+#' @seealso \code{\link{find_nearest_constant_exons}}, \code{\link{plot_segment_coverage}}
+#' @export
+get_plot_coords_for_seg <- function(sid, pb_all, gene_descr) {
+  # 1. Find nearest constant exons
+  nearest <- find_nearest_constant_exons(pb_all, sid)
+  up_id <- nearest["up"]
+  down_id <- nearest["down"]
+
+  # 2. Extract gene_id from rowRanges
+  seg_ranges <- SummarizedExperiment::rowRanges(pb_all)
+  gene_id <- seg_ranges[sid, "gene_id"]
+
+  # 3. Determine start coordinate
+  if (!is.na(up_id)) {
+    # use 50 bp upstream of the upstream exon's start
+    up_start <- stats::start(seg_ranges[up_id])
+    start_coord <- up_start - 50
+  } else {
+    # fallback to gene start
+    start_coord <- gene_descr[gene_id, "start"]
+  }
+
+  # 4. Determine stop coordinate
+  if (!is.na(down_id)) {
+    # use 50 bp upstream of the downstream exon's end
+    down_end <- stats::end(seg_ranges[down_id])
+    stop_coord <- down_end - 50
+  } else {
+    # fallback to gene end
+    stop_coord <- gene_descr[gene_id, "end"]
+  }
+
+  return(list(start = start_coord, stop = stop_coord))
+}
