@@ -17,6 +17,8 @@ Imports:
     Matrix,
     S4Vectors,
     SummarizedExperiment,
+    graphics,
+    plotCoverage,
     plyr,
     visutils
 Suggests:

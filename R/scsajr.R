@@ -2368,3 +2368,305 @@ sum_covs <- function(cov_list) {
 
   return(r)
 }
+
+
+#' Plot read coverage and splice junctions for a genomic segment across groups
+#'
+#' This function visualizes read coverage, junction support, PSI (percent spliced-in), and CPM for a specified segment or genomic region across multiple groups.
+#' It can either accept a segment ID (`sid`) and a `SummarizedExperiment` of pseudobulk splicing (`data_as`) to compute PSI,
+#'  or explicit `chr`, `start`, `stop`, and precomputed `covs` to plot raw coverage.
+#' When both `data_as` and `sid` are provided, PSI boxplots are drawn;
+#'  when `data_ge` is provided, CPM boxplots or plots are drawn.
+#' Finally, transcript models from a `gtf` data.frame are rendered below.
+#'
+#' @param sid Character; segment ID (row name of `data_as`) to center on. Required if `data_as` is given.
+#' @param chr Character; chromosome name (e.g., `"chr1"`). Required if not using `sid`.
+#' @param start Numeric; genomic start coordinate of plot window. If `sid` is provided, can be `NULL`.
+#' @param stop Numeric; genomic stop coordinate of plot window. If `sid` is provided, can be `NULL`.
+#' @param covs A named list of coverage objects (each produced by `getReadCoverage()` and then `sum_covs()`),
+#'   where names are group labels. If `NULL`, coverage is loaded from BAMs specified in `samples`.
+#' @param celltypes Character vector of group labels (subset of those in `covs` and/or `data_as`) to plot.
+#'   If `NULL` and `sid` + `data_as` provided, all groups with PSI for `sid` are used.
+#' @param data_as A `SummarizedExperiment` of pseudobulk splicing data (with assays `i`, `e`, optionally `psi`).
+#'   If provided along with `sid`, PSI boxplots per group will be drawn.
+#' @param data_ge A `SummarizedExperiment` of pseudobulk gene‐expression data (with assay `cpm`).
+#'   If provided, a CPM boxplot per group is drawn for the gene of `sid`.
+#' @param groupby Character; column name in `colData(data_as)` and `colData(data_ge)` defining grouping (e.g., `"celltype"`).
+#'   Required if `data_as` or `data_ge` is provided. Cannot be a length->1 vector.
+#' @param barcodes A data.frame mapping `sample_id` and `barcode` to group labels (same `groupby` name). Required if raw coverage is loaded.
+#' @param samples A data.frame with columns `sample_id` and `bam_path` for each sample. Required if raw coverage is loaded.
+#' @param gene_descr A data.frame of gene annotations with row names = gene IDs, and columns `start`, `end`, `name`, `descr`.
+#'   Required if PSI or CPM are to be labeled or if transcript trigram is needed.
+#' @param scan_bam_flags A list passed to `scanBamFlags()` when loading from BAM.
+#'   Default: `list(isNotPassingQualityControls = FALSE, isDuplicate = FALSE, isSupplementaryAlignment = FALSE, isSecondaryAlignment = FALSE)`.
+#' @param plot_junc_only_within Logical or `NA`; if `TRUE`, only plot junctions fully within `[start, stop]`;
+#'   if `FALSE`, plot junctions with at least one end in the window; if `NA`, plot all junctions. Default `NA`.
+#' @param min_junc_cov_f Numeric; fraction threshold for plotting junctions by fraction of coverage. Default `0.01`.
+#' @param min_junc_cov Numeric; minimum junction coverage to plot. Default `3`.
+#' @param gtf A data.frame of gene/transcript annotation with columns `gene_id`, `start`, `end`, `exon.col`, `cds.col`.
+#'   Only rows for the gene of `sid` are used if `sid` is provided.
+#'   Must be suitable for `plotTranscripts()`.
+#' @param ylim_by_junc Logical; if `TRUE`, set y‐axis limits by junction coverage only. Default `FALSE`.
+#' @param ylim Numeric vector of length 2 specifying y‐axis limits for coverage plots. If `NULL`, determined automatically.
+#' @param oma Numeric vector of length 4 for `par(oma = ...)`. Default `c(6, 34, 3, 1)`.
+#'
+#' @return Invisibly returns the updated `covs` list (with any newly loaded coverage added). Plots are drawn as a multi‐panel figure:
+#'   1. Left: CPM boxplot (if `data_ge` provided).
+#'   2. Middle: PSI boxplot (if `data_as` provided).
+#'   3. Right: Per‐group coverage and junction plots, one row per group.
+#'   4. Bottom: Transcript model plot for gene of `sid`.
+#'
+#' @details
+#' 1. Argument validation
+#'    - `groupby` must be a single column name if either `data_as` or `data_ge` is provided.
+#'    - If both `start`/`stop`/`chr` are `NULL`, `sid` + `data_as` must be provided.
+#'    - If raw coverage must be loaded (i.e., `covs` is `NULL`), `samples`, `barcodes`, and `groupby` are required.
+#'
+#' 2. PSI boxplot (when `sid` + `data_as`)
+#'    - Subset `data_as` to row = `sid`.
+#'    - Compute `psi <- assay(data_as, "psi")[sid, ]` if present, else call `calc_psi(data_as)[sid, ]`.
+#'    - Split `psi` by group via `get_groupby_factor(data_as, groupby)` and draw horizontal boxplot via `boxplot(..., horizontal = TRUE)`.
+#'
+#' 3. CPM boxplot (when `data_ge` + `sid`)
+#'    - Determine `gid <- rowRanges(data_as)[sid, "gene_id"]`.
+#'    - Extract CPM for that gene: `cpms <- assay(data_ge, "cpm")[gid, ]`.
+#'    - Split by group and draw boxplot similarly.
+#'
+#' 4. Coverage and junction plots
+#'    - If `covs` is `NULL`, for each group:
+#'      - Filter `barcodes` to those with `groupby` = group label.
+#'      - Call `getReadCoverage(bam_path, chr, start, stop, strand, scanBamFlags, tagFilter = list(CB = barcodes_in_group))` for each sample,
+#'        then merge via `sum_covs()`.
+#'      - Store result in `covs[[group]]`.
+#'    - Define layout: one column for coverage/junction per group (stacked), plus two left columns for boxplots if drawn.
+#'    - For each group row:
+#'      - Subset `cov <- covs[[group]]` to `[start, stop]` via `subsetCov()`.
+#'      - Compute `junc_filter` based on `plot_junc_only_within`, `min_junc_cov`, and `min_junc_cov_f`.
+#'      - Determine `ylim_group <- if (!is.null(ylim)) ylim else if (ylim_by_junc) c(0, max(junc_scores)) else c(0, max(cov$cov))`.
+#'      - Call `plotReadCov(cov, xlim = c(start, stop), ylab = "Coverage", main = group, plot.junc.only.within = plot_junc_only_within, min.junc.cov = min_junc_cov, min.junc.cov.f = min_junc_cov_f, ylim = ylim_group, xaxt = "n")`.
+#'      - Draw `abline(h = 0)`.
+#'
+#' 5. Transcript model
+#'    - Call `plotTranscripts(gtf_subset, new = TRUE, exon.col = NA, cds.col = NA, xlim = c(start, stop))` at the bottom.
+#'
+#' 6. Return value
+#'    Invisibly returns `covs` (a named list of per‐group coverage objects) so cached coverage can be reused.
+#'
+#' @seealso \code{\link{sum_covs}}, \code{\link{subset_cov}}
+#' @export
+plot_segment_coverage <- function(
+    sid = NULL,
+    chr = NULL,
+    start = NULL,
+    stop = NULL,
+    covs = NULL,
+    celltypes = NULL,
+    data_as = NULL,
+    data_ge = NULL,
+    groupby,
+    barcodes,
+    samples,
+    gene_descr,
+    scan_bam_flags = list(
+      isNotPassingQualityControls = FALSE,
+      isDuplicate = FALSE,
+      isSupplementaryAlignment = FALSE,
+      isSecondaryAlignment = FALSE
+    ),
+    plot_junc_only_within = NA,
+    min_junc_cov_f = 0.01,
+    min_junc_cov = 3,
+    gtf,
+    ylim_by_junc = FALSE,
+    ylim = NULL,
+    oma = c(6, 34, 3, 1)) {
+  # 1. Argument validation
+  if ((!is.null(data_as) || !is.null(data_ge)) && length(groupby) != 1) {
+    stop("`groupby` must be a single column name when using `data_as` or `data_ge`.")
+  }
+  if (is.null(chr) && is.null(start) && is.null(stop) && is.null(sid)) {
+    stop("Either `sid` or (`chr`, `start`, `stop`) must be provided.")
+  }
+  if (is.null(covs) && (is.null(samples) || is.null(barcodes) || is.null(groupby))) {
+    stop("To load coverage from BAM, `samples`, `barcodes`, and `groupby` are required.")
+  }
+
+  # 2. PSI preparation if sid + data_as provided
+  psi <- NULL
+  if (!is.null(sid) && !is.null(data_as)) {
+    # Construct group factor
+    group_factor_as <- get_groupby_factor(data_as, groupby)
+    # Subset data_as to only this segment
+    se_seg <- data_as[sid, ]
+    # Compute PSI array for this segment
+    if ("psi" %in% SummarizedExperiment::assayNames(se_seg)) {
+      psi_vals <- SummarizedExperiment::assay(se_seg, "psi")
+    } else {
+      psi_vals <- calc_psi(se_seg)
+    }
+    psi <- split(psi_vals, group_factor_as)
+    psi <- lapply(psi, stats::na.omit)
+    psi <- psi[order(sapply(psi, mean, na.rm = TRUE))]
+  }
+
+  # 3. CPM preparation if data_ge provided
+  cpm <- NULL
+  gid <- NULL
+  if (!is.null(data_ge) && !is.null(data_as) && !is.null(sid)) {
+    group_factor_ge <- get_groupby_factor(data_ge, groupby)
+    gid <- SummarizedExperiment::rowRanges(data_as)[sid, "gene_id"]
+    cpm_vals <- visutils::log10p1(SummarizedExperiment::assay(data_ge, "cpm")[gid, , drop = FALSE])
+    cpm <- split(cpm_vals, group_factor_ge)[names(psi)]
+  }
+
+  # 4. Determine genomic coordinates
+  if (!is.null(sid) && !is.null(data_as)) {
+    seg_ranges <- as.data.frame(SummarizedExperiment::rowRanges(data_as))
+    gene_id <- seg_ranges[sid, "gene_id"]
+    if (is.null(start)) {
+      start <- gene_descr[gene_id, "start"]
+    }
+    if (is.null(stop)) {
+      stop <- gene_descr[gene_id, "end"]
+    }
+    if (is.null(chr)) {
+      chr <- as.character(seg_ranges[sid, "seqnames"])
+    }
+  }
+
+  # 5. Prepare GTF subset for transcript model
+  if (!is.null(sid)) {
+    gtf <- gtf[gtf$gene_id == SummarizedExperiment::rowRanges(data_as)[sid, "gene_id"], ]
+  }
+  gtf$exon.col <- "black"
+  gtf$cds.col <- "black"
+  if (!is.null(sid)) {
+    f <- gtf$start <= seg_ranges[sid, "end"] & gtf$stop >= seg_ranges[sid, "start"]
+    gtf$exon.col[f] <- "red"
+    gtf$cds.col[f] <- "red"
+  }
+
+  # 6. Auto‐detect celltypes if missing
+  if (is.null(celltypes) && !is.null(psi)) {
+    celltypes <- rev(names(psi))
+  }
+  if (is.null(celltypes)) {
+    celltypes <- unique(barcodes[, groupby])
+  }
+
+  # 7. Build layout matrix
+  #    If PSI present, allocate two left columns; if CPM, allocate one more
+  n_groups <- length(celltypes)
+  layout_matrix <- matrix(seq_len(1 + n_groups), ncol = 1)
+  if (!is.null(psi)) {
+    layout_matrix <- layout_matrix + 1
+    layout_matrix <- cbind(1, layout_matrix)
+  }
+  if (!is.null(cpm)) {
+    layout_matrix <- layout_matrix + 1
+    layout_matrix <- cbind(1, layout_matrix)
+  }
+  if (ncol(layout_matrix) > 1) {
+    layout_matrix[nrow(layout_matrix), -ncol(layout_matrix)] <- max(layout_matrix) + 1
+  }
+  graphics::layout(layout_matrix, widths = c(rep(1, ncol(layout_matrix) - 1), 3), heights = c(rep(1, nrow(layout_matrix) - 1), 4))
+  graphics::par(bty = "n", tcl = -0.2, mgp = c(1.3, 0.3, 0), mar = c(0, 0.5, 0, 0), oma = oma, xpd = NA)
+
+  # 8. Plot CPM boxplot if available
+  if (!is.null(cpm)) {
+    plot(1, t = "n", yaxs = "i", ylim = c(0.5, n_groups + 0.5), xlim = c(0, max(unlist(cpm))), yaxt = "n", xlab = "l10CPM", ylab = "")
+    graphics::boxplot(cpm, horizontal = TRUE, las = 1, add = TRUE, xpd = NA, cex.axis = 2, xaxt = "n")
+  }
+
+  # 9. Plot PSI boxplot if available
+  if (!is.null(psi)) {
+    plot(1, t = "n", yaxs = "i", ylim = c(0.5, n_groups + 0.5), xlim = c(0, 1), yaxt = "n", xlab = "PSI", ylab = "")
+    graphics::boxplot(psi, horizontal = TRUE, las = 1, add = TRUE, yaxt = if (is.null(cpm)) "s" else "n")
+  }
+
+  # 10. Coverage and junction plotting per group
+  graphics::par(mar = c(0, 6, 1.1, 0), xpd = FALSE)
+  for (ct in celltypes) {
+    cov <- covs[[ct]]
+    # Load coverage if missing or range incomplete
+    if (is.null(cov) || start < cov$start || stop > cov$end) {
+      cov <- list()
+      for (i in seq_len(nrow(samples))) {
+        sample_id <- samples$sample_id[i]
+        bam_path <- samples$bam_path[i]
+        tags <- barcodes$barcode[barcodes$sample_id == sample_id & !is.na(barcodes[, groupby]) & barcodes[, groupby] == ct]
+        if (length(tags) == 0) next
+        cov[[length(cov) + 1]] <- plotCoverage::getReadCoverage(bam_path, chr, start, stop, strand = NA, scan_bam_flags = scan_bam_flags, tagFilter = list(CB = tags))
+      }
+      if (length(cov) > 0) {
+        cov <- sum_covs(cov)
+      }
+      covs[[ct]] <- cov
+    }
+    # Subset cov to [start, stop]
+    cov_sub <- subset_cov(covs[[ct]], start, stop)
+
+    # Determine junction filter
+    juncs <- cov_sub$juncs
+    junc_filter <- rep(TRUE, nrow(juncs))
+    if (!is.na(plot_junc_only_within) && plot_junc_only_within) {
+      junc_filter <- (juncs$start >= start & juncs$end <= stop)
+    } else if (!is.na(plot_junc_only_within) && !plot_junc_only_within) {
+      junc_filter <- (juncs$start >= start & juncs$start <= stop) |
+        (juncs$end >= start & juncs$end <= stop)
+    }
+
+    # Determine y‐axis limits
+    if (is.null(ylim)) {
+      raw_cov_vals <- cov_sub$cov@values
+      raw_junc_vals <- juncs$score[junc_filter]
+      if (ylim_by_junc) {
+        y_max <- max(1, raw_junc_vals, na.rm = TRUE)
+      } else {
+        y_max <- max(1, raw_cov_vals, raw_junc_vals, na.rm = TRUE)
+      }
+      ylim_group <- c(0, y_max)
+    } else {
+      ylim_group <- ylim
+    }
+
+    # Plot coverage+junction
+    plotCoverage::plotReadCov(cov_sub,
+      xlim = c(start, stop), ylab = "Coverage", xlab = chr,
+      main = ct, plot.junc.only.within = plot_junc_only_within,
+      min.junc.cov = min_junc_cov, min.junc.cov.f = min_junc_cov_f,
+      ylim = ylim_group, xaxt = "n"
+    )
+    graphics::abline(h = 0)
+  }
+
+  # 11. Transcript model plot
+  graphics::par(mar = c(3, 6, 0.2, 0))
+  plotCoverage::plotTranscripts(gtf, new = TRUE, exon.col = NA, cds.col = NA, xlim = c(start, stop))
+
+  # 12. CPM vs PSI scatter if both present
+  if (!is.null(psi) && !is.null(cpm)) {
+    lncol <- ceiling(n_groups / 30)
+    graphics::par(mar = c(3, 8 * lncol, 3, 0), xpd = NA)
+    mean_cpm <- sapply(cpm, mean)
+    mean_psi <- sapply(psi, mean, na.rm = TRUE)
+    visutils::plotVisium(cbind(mean_cpm, mean_psi),
+      ylim = c(0, 1),
+      labels = names(psi), type = "p", xaxt = "s", yaxt = "s",
+      pch = 16, xlab = "l10CPM", ylab = "PSI", bty = "n", cex = 2, xaxs = "r", yaxs = "r",
+      legend.args = list(
+        x = graphics::grconvertX(0, "ndc", "user"),
+        y = graphics::grconvertY(1, "npc", "user"),
+        ncol = lncol
+      )
+    )
+  }
+
+  # 13. Add main title across panels if sid is provided
+  if (!is.null(sid)) {
+    gene_info <- gene_descr[SummarizedExperiment::rowRanges(data_as)[sid, "gene_id"], ]
+    graphics::mtext(paste0(sid, " ", gene_info["name"], "\n", gene_info["descr"]), side = 3, outer = TRUE)
+  }
+
+  invisible(covs)
+}
