@@ -168,11 +168,6 @@ fit_as_glm <- function(
     return_pv = FALSE,
     overdisp = TRUE,
     disp_param = NULL) {
-  # Ensure plyr is available
-  if (!requireNamespace("plyr", quietly = TRUE)) {
-    stop("Please install the 'plyr' package to use fit_as_glm().")
-  }
-
   # Extract term names from the formula
   term_labels <- attr(stats::terms(formula), "term.labels")
 
@@ -457,7 +452,7 @@ test_all_groups_as <- function(
   pv_df$group_fdr <- stats::p.adjust(pv_df$group, method = "BH")
 
   # 4. Compute delta‐PSI, low_state, high_state
-  dpsi_df <- get_dpsi(pbas, group_factor)
+  dpsi_df <- get_dpsi(pbas, group_factor, min_cov = 50)
 
   # 5. Combine results: ensure matching row order
   res <- cbind(
@@ -660,64 +655,6 @@ find_marker_as <- function(
 }
 
 
-#' Select markers from all‐celltype test results
-#'
-#' From a data.frame of per‐segment results comparing all groups simultaneously (e.g., output of `test_all_groups_as()`),
-#'   this function selects only those segments that pass both a group‐level FDR threshold and a minimum delta‐PSI threshold.
-#' It returns a data.frame with one row per qualifying segment.
-#'
-#' @param all_celltype_df A data.frame (rownames = segment IDs) (output of `test_all_groups_as()`), containing columns:
-#'   \describe{
-#'     \item{overdispersion}{Estimated dispersion from each segment’s GLM.}
-#'     \item{group}{Raw p‐value from the likelihood‐ratio test for the `group` term.}
-#'     \item{group_fdr}{Benjamini‐Hochberg adjusted FDR (across all segments).}
-#'     \item{low_state}{Group label with lowest mean PSI (from `get_dpsi()`).}
-#'     \item{high_state}{Group label with highest mean PSI.}
-#'     \item{dpsi}{Difference in mean PSI between `high_state` and `low_state`.}
-#'   }
-#' @param fdr_thr Numeric: false discovery rate cutoff (default: 0.05).
-#' @param dpsi_thr Numeric: minimum absolute delta PSI cutoff (default: 0.1).
-#'
-#' @return A data.frame with one row per segment satisfying `group_fdr < fdr_thr` and `dpsi > dpsi_thr`.
-#'   Columns in the returned data.frame:
-#'   \describe{
-#'     \item{`pv`}{Raw p‐value from the likelihood‐ratio test for the group effect (copied from `all_celltype_df$group`).}
-#'     \item{`fdr`}{Benjamini‐Hochberg adjusted FDR (copied from `all_celltype_df$group_fdr`).}
-#'     \item{`dpsi`}{Delta‐PSI (copied from `all_celltype_df$dpsi`).}
-#'     \item{`seg_id`}{Segment ID (rownames of `all_celltype_df`).}
-#'     \item{`group`}{Group label with highest mean PSI (copied from `all_celltype_df$high_state`).}
-#'   }
-#'   Row names of the returned data.frame are the segment IDs.
-#'
-#' @examples
-#' \dontrun{
-#' # Assume 'all_test' is output of test_all_groups_as(), with rownames = segment IDs.
-#' sig_df <- select_markers_from_all_celltype_test(all_test, fdr_thr = 0.05, dpsi_thr = 0.2)
-#' }
-#'
-#' @export
-select_markers_from_all_celltype_test <- function(
-    all_celltype_df,
-    fdr_thr = 0.05,
-    dpsi_thr = 0.1) {
-  # Identify segments passing both thresholds
-  keep <- (all_celltype_df$group_fdr < fdr_thr) & (all_celltype_df$dpsi > dpsi_thr)
-  subset_df <- all_celltype_df[keep, , drop = FALSE]
-
-  # Build result data.frame
-  result <- data.frame(
-    pv = subset_df$group,
-    fdr = subset_df$group_fdr,
-    dpsi = subset_df$dpsi,
-    seg_id = rownames(subset_df),
-    group = subset_df$high_state,
-    row.names = rownames(subset_df),
-    stringsAsFactors = FALSE
-  )
-  return(result)
-}
-
-
 #' Select top marker segments per group (celltype)
 #'
 #' From a list of per‐segment test results (as returned by `find_marker_as()`),
@@ -849,6 +786,63 @@ select_markers <- function(
   return(result)
 }
 
+#' Select markers from all‐celltype test results
+#'
+#' From a data.frame of per‐segment results comparing all groups simultaneously (e.g., output of `test_all_groups_as()`),
+#'   this function selects only those segments that pass both a group‐level FDR threshold and a minimum delta‐PSI threshold.
+#' It returns a data.frame with one row per qualifying segment.
+#'
+#' @param all_celltype_df A data.frame (rownames = segment IDs) (output of `test_all_groups_as()`), containing columns:
+#'   \describe{
+#'     \item{overdispersion}{Estimated dispersion from each segment’s GLM.}
+#'     \item{group}{Raw p‐value from the likelihood‐ratio test for the `group` term.}
+#'     \item{group_fdr}{Benjamini‐Hochberg adjusted FDR (across all segments).}
+#'     \item{low_state}{Group label with lowest mean PSI (from `get_dpsi()`).}
+#'     \item{high_state}{Group label with highest mean PSI.}
+#'     \item{dpsi}{Difference in mean PSI between `high_state` and `low_state`.}
+#'   }
+#' @param fdr_thr Numeric: false discovery rate cutoff (default: 0.05).
+#' @param dpsi_thr Numeric: minimum absolute delta PSI cutoff (default: 0.1).
+#'
+#' @return A data.frame with one row per segment satisfying `group_fdr < fdr_thr` and `dpsi > dpsi_thr`.
+#'   Columns in the returned data.frame:
+#'   \describe{
+#'     \item{`pv`}{Raw p‐value from the likelihood‐ratio test for the group effect (copied from `all_celltype_df$group`).}
+#'     \item{`fdr`}{Benjamini‐Hochberg adjusted FDR (copied from `all_celltype_df$group_fdr`).}
+#'     \item{`dpsi`}{Delta‐PSI (copied from `all_celltype_df$dpsi`).}
+#'     \item{`seg_id`}{Segment ID (rownames of `all_celltype_df`).}
+#'     \item{`group`}{Group label with highest mean PSI (copied from `all_celltype_df$high_state`).}
+#'   }
+#'   Row names of the returned data.frame are the segment IDs.
+#'
+#' @examples
+#' \dontrun{
+#' # Assume 'all_test' is output of test_all_groups_as(), with rownames = segment IDs.
+#' sig_df <- select_markers_from_all_celltype_test(all_test, fdr_thr = 0.05, dpsi_thr = 0.2)
+#' }
+#'
+#' @export
+select_markers_from_all_celltype_test <- function(
+    all_celltype_df,
+    fdr_thr = 0.05,
+    dpsi_thr = 0.1) {
+  # Identify segments passing both thresholds
+  keep <- (all_celltype_df$group_fdr < fdr_thr) & (all_celltype_df$dpsi > dpsi_thr)
+  subset_df <- all_celltype_df[keep, , drop = FALSE]
+
+  # Build result data.frame
+  result <- data.frame(
+    pv = subset_df$group,
+    fdr = subset_df$group_fdr,
+    dpsi = subset_df$dpsi,
+    seg_id = rownames(subset_df),
+    group = subset_df$high_state,
+    row.names = rownames(subset_df),
+    stringsAsFactors = FALSE
+  )
+  return(result)
+}
+
 
 #' Select combined marker segments from per‐group and all‐groups tests
 #'
@@ -940,8 +934,8 @@ select_all_markers <- function(
   # Split by group
   split_by_group <- split(combined, combined$group)
   trimmed_list <- lapply(split_by_group, function(df_group) {
-    # Order by descending |dpsi|
-    df_group <- df_group[order(abs(df_group$dpsi), decreasing = TRUE), , drop = FALSE]
+    # Order by is_marker & descending |dpsi| (Prioritise select_markers())
+    df_group <- df_group[order(df_group$is_marker, abs(df_group$dpsi), decreasing = TRUE), , drop = FALSE]
     # Trim to at most n rows
     if (nrow(df_group) > n) {
       df_group <- df_group[seq_len(n), , drop = FALSE]
