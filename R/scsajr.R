@@ -1688,7 +1688,6 @@ marker_heatmap <- function(
 #'   If no `.mtx` file is found, returns `NULL`.
 #'
 #' @seealso \code{\link{read_named_MM}}, \code{\link{SummarizedExperiment}}, \code{\link[Matrix]{readMM}}
-#' @importFrom Matrix readMM
 #' @export
 load_introns_as_se <- function(path) {
   # 1. Use read_named_MM() to load the sparse matrix with row/column names
@@ -1729,4 +1728,113 @@ load_introns_as_se <- function(path) {
   )
 
   return(se)
+}
+
+
+#' Bind a list of sparse matrices by rows, aligning columns
+#'
+#' Given a list of matrices (possibly sparse), this function ensures that each matrix hasthe same set of column names
+#'   by inserting zero‐filled sparse columns where needed, then row‐binds them into a single sparse matrix.
+#'
+#' @param mat_list A list of matrices or sparse matrices. Each should have identical row names
+#'   but may differ in column names.
+#' @param colnames_union Optional character vector of column names to enforce across all matrices.
+#'   If `NULL`, defaults to the union of all column names in `mat_list`.
+#'
+#' @return A single sparse matrix (class `dgCMatrix`) obtained by row‐binding all matrices in
+#'   `mat_list`, with columns matching `colnames_union`. Missing columns in a given matrix
+#'   are filled with zero‐filled sparse columns.
+#'
+#' @examples
+#' \dontrun{
+#' library(Matrix)
+#' mat1 <- sparseMatrix(
+#'   i = c(1, 2), j = c(1, 2), x = c(1, 2),
+#'   dims = c(2, 3), dimnames = list(c("r1", "r2"), c("A", "B", "C"))
+#' )
+#' mat2 <- sparseMatrix(
+#'   i = c(1, 2), j = c(2, 3), x = c(3, 4),
+#'   dims = c(2, 3), dimnames = list(c("r1", "r2"), c("B", "C", "D"))
+#' )
+#' combined <- rbind_matrix(list(mat1, mat2))
+#' # Result has columns A, B, C, D, with zeros filled sparsely
+#' }
+#'
+#' @export
+rbind_matrix <- function(mat_list, colnames_union = NULL) {
+  # Determine union of column names if not provided
+  if (is.null(colnames_union)) {
+    colnames_union <- unique(unlist(lapply(mat_list, colnames)))
+  }
+
+  # Adjust each matrix to have all columns, filling missing with sparse zeros
+  adjusted_list <- lapply(mat_list, function(mat) {
+    # Coerce to sparse dgCMatrix if not already
+    if (!inherits(mat, "dgCMatrix")) {
+      mat <- Matrix::Matrix(as.matrix(mat), sparse = TRUE)
+    }
+    missing_cols <- setdiff(colnames_union, colnames(mat))
+    if (length(missing_cols) > 0) {
+      zero_mat <- Matrix::Matrix(
+        0,
+        nrow = nrow(mat),
+        ncol = length(missing_cols),
+        sparse = TRUE,
+        dimnames = list(rownames(mat), missing_cols)
+      )
+      mat <- cbind(mat, zero_mat)
+    }
+    # Reorder columns to match colnames_union
+    mat[, colnames_union, drop = FALSE]
+  })
+
+  # Row-bind all adjusted sparse matrices; result remains sparse
+  do.call(rbind, adjusted_list)
+}
+
+
+#' Subset or reorder sparse matrix columns to a specified set
+#'
+#' Given a matrix or sparse matrix and a target set of column names, this function returns
+#' a new sparse matrix whose columns match exactly the target set. Existing columns are
+#' retained (and reordered if needed), and any target column not present is added as a
+#' zero‐filled sparse column.
+#'
+#' @param mat A matrix or sparse matrix with named columns.
+#' @param target_cols Character vector specifying the desired column names (and order).
+#'
+#' @return A sparse matrix (`dgCMatrix`) with columns exactly `target_cols`. Any column in
+#'   `target_cols` not originally present in `mat` will be inserted as a zero‐filled sparse column.
+#'   Row names are unchanged.
+#'
+#' @examples
+#' \dontrun{
+#' library(Matrix)
+#' m <- sparseMatrix(
+#'   i = c(1, 2, 1), j = c(1, 2, 3), x = c(1, 2, 3),
+#'   dims = c(2, 4), dimnames = list(c("r1", "r2"), c("A", "B", "D", "E"))
+#' )
+#' result <- sub_cols_matrix(m, c("A", "B", "C", "D", "E"))
+#' # 'C' inserted as sparse zero column; columns ordered A,B,C,D,E
+#' }
+#'
+#' @export
+sub_cols_matrix <- function(mat, target_cols) {
+  # Coerce to sparse if not already
+  if (!inherits(mat, "dgCMatrix")) {
+    mat <- Matrix::Matrix(as.matrix(mat), sparse = TRUE)
+  }
+  missing_cols <- setdiff(target_cols, colnames(mat))
+  if (length(missing_cols) > 0) {
+    zero_mat <- Matrix::Matrix(
+      0,
+      nrow = nrow(mat),
+      ncol = length(missing_cols),
+      sparse = TRUE,
+      dimnames = list(rownames(mat), missing_cols)
+    )
+    mat <- cbind(mat, zero_mat)
+  }
+  # Reorder columns to exactly match target_cols
+  mat[, target_cols, drop = FALSE]
 }
