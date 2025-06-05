@@ -1675,10 +1675,10 @@ marker_heatmap <- function(
 #'
 #' Reads a Matrix Market file (and accompanying keys) to build a `SummarizedExperiment`
 #'  where rows are intron segments and columns are cell barcodes.
-#' Uses `read_named_MM()` to load the counts matrix along with row and column names.
+#' Uses `read_named_mm()` to load the counts matrix along with row and column names.
 #'
 #' @param path Character; file prefix for the Matrix Market data.
-#'   If `path.mtx` or `path.mtx.gz` exists, `read_named_MM(path)` is used to load the sparse matrix.
+#'   If `path.mtx` or `path.mtx.gz` exists, `read_named_mm(path)` is used to load the sparse matrix.
 #'
 #' @return A `SummarizedExperiment` with:
 #'   - An assay named `counts` (a sparse `dgCMatrix`) storing intron counts: rows = intron IDs, columns = barcodes.
@@ -1687,11 +1687,11 @@ marker_heatmap <- function(
 #'   - `colData`: a data.frame with one column `barcode` (the column names of the count matrix).
 #'   If no `.mtx` file is found, returns `NULL`.
 #'
-#' @seealso \code{\link{read_named_MM}}, \code{\link{SummarizedExperiment}}, \code{\link[Matrix]{readMM}}
+#' @seealso \code{\link{read_named_mm}}, \code{\link[Matrix]{readMM}}
 #' @export
 load_introns_as_se <- function(path) {
-  # 1. Use read_named_MM() to load the sparse matrix with row/column names
-  counts <- read_named_MM(path)
+  # 1. Use read_named_mm() to load the sparse matrix with row/column names
+  counts <- read_named_mm(path)
   if (is.null(counts)) {
     return(NULL)
   }
@@ -1837,4 +1837,64 @@ sub_cols_matrix <- function(mat, target_cols) {
   }
   # Reorder columns to exactly match target_cols
   mat[, target_cols, drop = FALSE]
+}
+
+
+#' Read a Matrix Market file with accompanying row/column keys
+#'
+#' Attempts to load a sparse matrix from `<prefix>.mtx` or `<prefix>.mtx.gz`,
+#'  and then assigns row names from `<prefix>_key1.csv` (or `.gz`) and column names from `<prefix>_key2.csv` (or `.gz`).
+#'
+#' @param prefix Character; file path prefix for the Matrix Market data.
+#'   If `prefix.mtx` or `prefix.mtx.gz` exists, reads it via `Matrix::readMM()`.
+#'   Row names are read from `prefix_key1.csv(.gz)`, column names from `prefix_key2.csv(.gz)`.
+#'
+#' @return A sparse matrix (`dgCMatrix`) with row names set to feature IDs (from key1) and
+#'   column names set to barcodes (from key2). If no `.mtx` file is found, returns `NULL`.
+#'
+#' @examples
+#' \dontrun{
+#' # Suppose files "data/counts.mtx" and "data/counts_key1.csv", "data/counts_key2.csv" exist:
+#' mat <- read_named_mm("data/counts")
+#' dim(mat)
+#' head(rownames(mat))
+#' head(colnames(mat))
+#' }
+#'
+#' @seealso \code{\link[Matrix]{readMM}}, \code{\link{load_introns_as_se}}
+#' @export
+read_named_mm <- function(prefix) {
+  # Check for .mtx file (uncompressed or gzipped)
+  mtx_path <- if (file.exists(paste0(prefix, ".mtx"))) {
+    paste0(prefix, ".mtx")
+  } else if (file.exists(paste0(prefix, ".mtx.gz"))) {
+    paste0(prefix, ".mtx.gz")
+  } else {
+    return(NULL)
+  }
+
+  # Read the sparse matrix
+  mat <- Matrix::readMM(mtx_path)
+
+  # Read row names from prefix_key1.csv or .gz
+  key1_path <- if (file.exists(paste0(prefix, "_key1.csv"))) {
+    paste0(prefix, "_key1.csv")
+  } else if (file.exists(paste0(prefix, "_key1.csv.gz"))) {
+    paste0(prefix, "_key1.csv.gz")
+  } else {
+    stop("Row key file not found: ", prefix, "_key1.csv(.gz)")
+  }
+  rownames(mat) <- readLines(key1_path)
+
+  # Read column names from prefix_key2.csv or .gz
+  key2_path <- if (file.exists(paste0(prefix, "_key2.csv"))) {
+    paste0(prefix, "_key2.csv")
+  } else if (file.exists(paste0(prefix, "_key2.csv.gz"))) {
+    paste0(prefix, "_key2.csv.gz")
+  } else {
+    stop("Column key file not found: ", prefix, "_key2.csv(.gz)")
+  }
+  colnames(mat) <- readLines(key2_path)
+
+  return(mat)
 }

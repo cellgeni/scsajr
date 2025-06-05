@@ -8,7 +8,7 @@ load_introns_as_se(path)
 }
 \arguments{
 \item{path}{Character; file prefix for the Matrix Market data.
-If \code{path.mtx} or \code{path.mtx.gz} exists, \code{read_named_MM(path)} is used to load the sparse matrix.}
+If \code{path.mtx} or \code{path.mtx.gz} exists, \code{read_named_mm(path)} is used to load the sparse matrix.}
 }
 \value{
 A \code{SummarizedExperiment} with:
@@ -23,8 +23,8 @@ If no \code{.mtx} file is found, returns \code{NULL}.
 \description{
 Reads a Matrix Market file (and accompanying keys) to build a \code{SummarizedExperiment}
 where rows are intron segments and columns are cell barcodes.
-Uses \code{read_named_MM()} to load the counts matrix along with row and column names.
+Uses \code{read_named_mm()} to load the counts matrix along with row and column names.
 }
 \seealso{
-\code{\link{read_named_MM}}, \code{\link{SummarizedExperiment}}, \code{\link[Matrix]{readMM}}
+\code{\link{read_named_mm}}, \code{\link[Matrix]{readMM}}
 }
