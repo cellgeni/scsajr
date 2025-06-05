@@ -2128,3 +2128,59 @@ find_nearest_constant_exons <- function(se, sid, psi_thr = 0.95) {
 
   return(c(up = up_id, down = down_id))
 }
+
+
+#' Construct a contingency table from paired x and y vectors
+#'
+#' Given two vectors `x` and `y` of equal length, and a corresponding vector `i` of values,
+#'  this function creates a matrix whose rows correspond to each unique value in `x`,
+#'  columns correspond to each unique value in `y`,
+#'  and entries are taken from `i` at matching `(x, y)` pairs.
+#'
+#' @param x A vector (atomic) of length n, representing row labels.
+#' @param y A vector of length n, representing column labels.
+#' @param i A vector of length n, where `i[j]` is the value to place at row = `x[j]`, column = `y[j]`.
+#'
+#' @return A matrix of dimension `length(unique(x)) × length(unique(y))`, with row names set to sorted unique values of `x`
+#'   and column names set to sorted unique values of `y`.
+#'   For each position `(r, c)`, the entry is the value from `i[j]` where `x[j] == r` and `y[j] == c`. If no such `j` exists, the entry is `NA`.
+#'
+#' @examples
+#' \dontrun{
+#' x <- c("A", "B", "A", "C")
+#' y <- c("X", "Y", "X", "Z")
+#' i <- c(1, 2, 3, 4)
+#' # unique(x) = A, B, C; unique(y) = X, Y, Z
+#' # (A, X) appears twice with values 1 and 3; the latter overwrites
+#' result <- cast_xy_table(x, y, i)
+#' #      X  Y  Z
+#' #  A   3 NA NA
+#' #  B  NA  2 NA
+#' #  C  NA NA  4
+#' }
+#'
+#' @export
+cast_xy_table <- function(x, y, i) {
+  # Determine sorted unique values
+  ys <- sort(unique(y))
+  xs <- sort(unique(x))
+
+  # Initialize result matrix with NA
+  m <- matrix(
+    NA,
+    nrow = length(xs),
+    ncol = length(ys),
+    dimnames = list(xs, ys)
+  )
+
+  # Convert to character for indexing
+  x_char <- as.character(x)
+  y_char <- as.character(y)
+
+  # Fill in values
+  for (j in seq_along(x_char)) {
+    m[x_char[j], y_char[j]] <- i[j]
+  }
+
+  return(m)
+}
