@@ -1667,3 +1667,66 @@ marker_heatmap <- function(
 
   invisible(NULL)
 }
+
+
+###### pipeline helpers ######
+
+#' Load intron counts as a SummarizedExperiment
+#'
+#' Reads a Matrix Market file (and accompanying keys) to build a `SummarizedExperiment`
+#'  where rows are intron segments and columns are cell barcodes.
+#' Uses `read_named_MM()` to load the counts matrix along with row and column names.
+#'
+#' @param path Character; file prefix for the Matrix Market data.
+#'   If `path.mtx` or `path.mtx.gz` exists, `read_named_MM(path)` is used to load the sparse matrix.
+#'
+#' @return A `SummarizedExperiment` with:
+#'   - An assay named `counts` (a sparse `dgCMatrix`) storing intron counts: rows = intron IDs, columns = barcodes.
+#'   - `rowRanges`: a `GRanges` built by parsing row names (intron IDs) of the form `chr:strand:start-end`.
+#'     It sets `seqnames = chr`, `ranges = IRanges(start, end)`, and `strand` as `"+"` or `"-"`.
+#'   - `colData`: a data.frame with one column `barcode` (the column names of the count matrix).
+#'   If no `.mtx` file is found, returns `NULL`.
+#'
+#' @seealso \code{\link{read_named_MM}}, \code{\link{SummarizedExperiment}}, \code{\link[Matrix]{readMM}}
+#' @importFrom Matrix readMM
+#' @export
+load_introns_as_se <- function(path) {
+  # 1. Use read_named_MM() to load the sparse matrix with row/column names
+  counts <- read_named_MM(path)
+  if (is.null(counts)) {
+    return(NULL)
+  }
+
+  # 2. Extract feature IDs and barcodes from the matrix
+  feature_ids <- rownames(counts)
+  barcodes <- colnames(counts)
+
+  # 3. Parse feature IDs of the form "chr:strand:start-end"
+  parts <- strsplit(feature_ids, ":")
+  chr <- vapply(parts, `[`, character(1), 1)
+  strand_code <- vapply(parts, `[`, character(1), 2)
+  coords <- vapply(parts, `[`, character(1), 3)
+  coord_split <- strsplit(coords, "-")
+  start <- as.integer(vapply(coord_split, `[`, character(1), 1))
+  end <- as.integer(vapply(coord_split, `[`, character(1), 2))
+  strand <- ifelse(strand_code == "1", "+",
+    ifelse(strand_code == "-1", "-", "*")
+  )
+
+  # 4. Build GRanges for rowRanges
+  row_ranges <- GenomicRanges::GRanges(
+    seqnames = chr,
+    ranges = IRanges::IRanges(start = start, end = end),
+    strand = strand,
+    feature_id = feature_ids
+  )
+
+  # 5. Construct SummarizedExperiment
+  se <- SummarizedExperiment::SummarizedExperiment(
+    assays    = list(counts = counts),
+    rowRanges = row_ranges,
+    colData   = data.frame(barcode = barcodes, row.names = barcodes)
+  )
+
+  return(se)
+}
