@@ -244,7 +244,7 @@ fit_as_glm <- function(
 #' @param disp_param Optional numeric; if provided, use this as the dispersion parameter for the test.
 #'   Otherwise, estimate dispersion from `fit_obj`’s residuals.
 #' @param term_labels Character vector of term names (excluding the intercept) in the original formula, in the same order returned by `attr(terms(formula), "term.labels")`.
-#' @param seg_id Character scalar; segment identifier (row name) used in warning messages.
+#' @param seg_id Character; segment identifier (row name) used in warning messages.
 #'
 #' @return A numeric vector of length `length(term_labels) + 1`.
 #'   The first element is the dispersion estimate actually used (either `disp_param` or `summary(fit_obj)$dispersion`),
@@ -1202,7 +1202,7 @@ pseudobulk <- function(
 #'
 #' @param se A `SummarizedExperiment` with assays named `i` (inclusion counts) and `e` (exclusion counts).
 #'   Rows are segments; columns are pseudobulk samples.
-#' @param min_cov Integer scalar; minimum total junction coverage (`i + e`) required to compute a valid PSI.
+#' @param min_cov Integer; minimum total junction coverage (`i + e`) required to compute a valid PSI.
 #'   For any `i + e < min_cov`, the PSI is set to `NA`. Default is `10`.
 #'
 #' @return A numeric matrix of dimensions `nrow(se)` × `ncol(se)` where each entry is the PSI value
@@ -1940,4 +1940,76 @@ load_sc_as <- function(segs, path) {
   # Align inclusion columns to exclusion
   i_sub <- i_mat[seg_ids, colnames(e_sub), drop = FALSE]
   return(list(e = e_sub, i = i_sub))
+}
+
+
+#' Compute delta‐PSI (difference in percent spliced‐in) per segment
+#'
+#' For a `SummarizedExperiment` of splicing segments, this function first pseudobulks the data by `groupby`,
+#'   computes PSI per segment (using `calc_psi()`), and then identifies for each segment
+#'   the group with lowest mean PSI (`low_state`),  the group with highest mean PSI (`high_state`), and their difference (`dpsi`).
+#'
+#' @param data A `SummarizedExperiment` where rows are segments and columns are single‐cell or pseudobulk samples.
+#'   Must contain assays `i` (inclusion) and `e` (exclusion) so that `calc_psi()` works after pseudobulking.
+#' @param groupby Either:
+#'   - A character vector of length `ncol(data)` giving a grouping label for each column, or
+#'   - One or more column names in `colData(data)`, whose values (pasted if multiple) define the grouping factor.
+#'   See `get_groupby_factor()` for details.
+#' @param min_cov Integer; minimum total junction coverage (`i + e`) per pseudobulk required to compute a valid PSI.
+#'                PSI values where `i + e < min_cov` are set to `NA`. Default is 50.
+#'
+#' @return A data.frame with one row per segment (rownames = `rownames(data)`), containing columns:
+#'   - `low_state`: group label with lowest mean PSI (or `NA` if fewer than two non‐NA values),
+#'   - `high_state`: group label with highest mean PSI,
+#'   - `dpsi`: numeric difference `PSI[high_state] - PSI[low_state]` (or `NA` if not computable).
+#'
+#' @details
+#' 1. The function calls `pseudobulk(data, groupby)`, which sums counts per group.
+#' 2. It then computes a PSI matrix via `calc_psi()` on the pseudobulk, obtaining one PSI value per segment × group.
+#' 3. For each segment (row of the PSI matrix):
+#'    - Extracts non‐`NA` PSI values, sorts them by ascending PSI.
+#'    - If at least two groups have non‐`NA` PSI, sets `low_state` to the name of the group with smallest PSI,
+#'      `high_state` to the group with largest PSI, and `dpsi = PSI[high_state] - PSI[low_state]`.
+#'    - Otherwise, leaves all three as `NA`.
+#'
+#' @seealso \code{\link{pseudobulk}}, \code{\link{calc_psi}}
+#' @export
+get_dpsi <- function(data, groupby, min_cov = 50) {
+  # 1. Pseudobulk by group
+  pb <- pseudobulk(data, groupby)
+
+  # 2. Compute PSI per segment × group
+  psi_mat <- calc_psi(pb, min_cov = min_cov)
+  # psi_mat is a matrix (n_segments × n_groups), possibly with NA
+
+  # 3. For each segment, find low_state, high_state, dpsi
+  result_list <- apply(psi_mat, 1, function(x) {
+    # x: numeric vector of PSI values for one segment across groups
+    non_na <- x[!is.na(x)]
+    if (length(non_na) < 2) {
+      return(data.frame(
+        low_state = NA_character_,
+        high_state = NA_character_,
+        dpsi = NA_real_
+      ))
+    }
+    # Sort by PSI
+    sorted_vals <- sort(non_na)
+    low_val <- sorted_vals[1]
+    high_val <- sorted_vals[length(sorted_vals)]
+    # Get group names corresponding to low_val and high_val
+    # 'names(non_na)' holds group labels
+    low_state <- names(non_na)[which(non_na == low_val)[1]]
+    high_state <- names(non_na)[which(non_na == high_val)[1]]
+    data.frame(
+      low_state = low_state,
+      high_state = high_state,
+      dpsi = high_val - low_val
+    )
+  })
+
+  # 4. Combine into a data.frame with rownames = segment IDs
+  result_df <- do.call(rbind, result_list)
+  rownames(result_df) <- rownames(data)
+  return(result_df)
 }
