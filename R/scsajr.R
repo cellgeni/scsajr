@@ -2670,3 +2670,82 @@ plot_segment_coverage <- function(
 
   invisible(covs)
 }
+
+
+#' Plot MDS with group connections and labels
+#'
+#' Given two-dimensional coordinates for samples (e.g., output of `cmdscale()`),
+#'  this function plots each point colored by its group,
+#'  draws segments connecting all pairs of points within the same group,
+#'  and labels each group at the mean of its points.
+#'
+#' @param xy A numeric matrix or data.frame with two columns (dimensions) and rows corresponding to samples.
+#'   Row names should match `samples`.
+#' @param celltypes A character vector giving the group label for each row of `xy`.
+#'   Length must equal `nrow(xy)`.
+#' @param ct2col A named vector mapping each unique group label in `celltypes` to a plotting color.
+#' @param samples A vector (or factor) of sample identifiers (same order as rows of `xy`),
+#'   used to choose point characters. Can be numeric or character; coerced to factor internally.
+#' @param ... Additional graphical parameters passed to \code{\link[graphics]{plot}()}.
+#'
+#' @return Invisibly returns `NULL`; plots a scatter of `xy` points with colored segments and labels.
+#'
+#' @details
+#' 1. Each point `xy[i, ]` is plotted using `pch = as.numeric(factor(samples[i])) %% 25`
+#'    and color `ct2col[celltypes[i]]`.
+#' 2. For each distinct group `ct`, all pairs of points `xy[which(celltypes == ct), ]` are
+#'    connected with line segments of color `ct2col[ct]`.
+#' 3. At the mean coordinate of each group’s points, the group label `ct` is drawn.
+#'
+#' @examples
+#' \dontrun{
+#' # Suppose 'mds_coords' is a matrix of size (n_samples × 2),
+#' # 'groups' is a factor of length n_samples, and 'colors' maps groups to colors.
+#' plot_mds(mds_coords, groups, colors, samples = rownames(mds_coords))
+#' }
+#'
+#' @seealso \code{\link{cmdscale}}, \code{\link{plot}}
+#' @export
+plot_mds <- function(xy, celltypes, ct2col, samples, ...) {
+  # Validate dimensions
+  if (nrow(xy) != length(celltypes) || nrow(xy) != length(samples)) {
+    stop("Length of 'celltypes' and 'samples' must match nrow(xy).")
+  }
+
+  # Determine plotting character per sample (cycle through 1:24)
+  pch_vals <- as.numeric(factor(samples)) %% 25
+  pch_vals[pch_vals == 0] <- 25 # avoid zero, use 25 if modulo is zero
+
+  # Initial scatter plot
+  graphics::plot(xy,
+    col = ct2col[celltypes],
+    pch = pch_vals,
+    xlab = "Dim 1",
+    ylab = "Dim 2",
+    ...
+  )
+
+  # Draw segments connecting all pairs within each group
+  unique_ct <- unique(celltypes)
+  for (ct in unique_ct) {
+    idx <- which(celltypes == ct)
+    if (length(idx) > 1) {
+      combs <- utils::combn(idx, 2)
+      graphics::segments(
+        xy[combs[1, ], 1], xy[combs[1, ], 2],
+        xy[combs[2, ], 1], xy[combs[2, ], 2],
+        col = ct2col[ct]
+      )
+    }
+  }
+
+  # Label each group at its centroid
+  for (ct in unique_ct) {
+    idx <- which(celltypes == ct)
+    centroid_x <- mean(xy[idx, 1])
+    centroid_y <- mean(xy[idx, 2])
+    graphics::text(centroid_x, centroid_y, labels = ct, col = ct2col[ct], cex = 1)
+  }
+
+  invisible(NULL)
+}
