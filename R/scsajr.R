@@ -3,9 +3,6 @@
 # Need to add package description
 # Need to figureout how to keep links in the Roxygen documentation
 
-DELIMITER <- "$"
-
-
 #' Filter segments and samples based on coverage and group criteria
 #'
 #' This function takes a `SummarizedExperiment` containing alternative splicing data
@@ -328,21 +325,26 @@ qbinom_lrt <- function(
 
 #' Determine grouping factor from a data.frame or SummarizedExperiment
 #'
-#' If `groupby` is a vector whose length matches the number of rows (or columns), this function treats it as the grouping factor directly.
-#' Otherwise, if `groupby` is one or more column names in a data.frame (or in `colData(se)`),
-#'  it pastes those columns together (with a delimiter) to form a grouping factor.
+#' If `groupby` is a vector (e.g., a factor) whose length matches the number of rows of a `data.frame` or the number of columns of a `SummarizedExperiment`, it is returned unchanged.
+#' Otherwise, if `groupby` is a character scalar or vector of column names present in the input,
+#'  those columns are pasted together row-wise (for a `data.frame`) or via `interaction()` (for factor columns in`SummarizedExperiment::colData()`) to form a single grouping factor.
 #'
 #' @param x Either a `SummarizedExperiment` (in which case its `colData()` is used) or a `data.frame` whose rows correspond to samples/pseudobulks.
 #' @param groupby Either:
 #'   \itemize{
-#'     \item A vector of length `nrow(x)`: treated as the grouping factor directly.
-#'     \item A character scalar or vector of column names in `x`: those columns are pasted (row‐wise) with a delimiter to form the grouping factor.
+#'     \item A vector of length `nrow(x)` or `ncol(x)` (for `SummarizedExperiment`):: treated as the grouping factor directly.
+#'     \item A character scalar or vector of column names in `x` (or in `colData(x)` if `x` is a `SummarizedExperiment`):
+#'            those columns are concatenated row-wise (using `paste()` or `interaction()`) to form a grouping factor.
 #'   }
 #' @param sep Character string used to separate pasted values when `groupby` is multiple column names. Default is `"\$"`.
 #'
 #' @return A character vector (or factor) of length `nrow(x)`, representing the grouping factor.
 #'   If `groupby` was already the same length as `nrow(x)`, it is returned unchanged.
 #'   Otherwise, it pastes together columns of `x`.
+#'
+#' @return A vector (typically a factor or character vector) of length equal to `nrow(x)` (for `data.frame`) or `ncol(x)` (for `SummarizedExperiment`), representing the grouping factor.
+#'         If `groupby` was already the correct length, it is returned unchanged.
+#'         Otherwise, it pastes or interacts specified columns of `x`.
 #'
 #' @examples
 #' df <- data.frame(
@@ -351,7 +353,7 @@ qbinom_lrt <- function(
 #'   batch = c("X", "Y", "X", "Y")
 #' )
 #'
-#' # Case 1: groupby is a factor vector
+#' # Case 1: groupby is a factor vector of correct length
 #' grp1 <- get_groupby_factor(df, groupby = c("A", "A", "B", "B"))
 #'
 #' # Case 2: groupby is one column name
@@ -360,36 +362,69 @@ qbinom_lrt <- function(
 #' # Case 3: groupby is multiple column names
 #' grp3 <- get_groupby_factor(df, groupby = c("celltype", "batch"))
 #'
+#' # When x is a SummarizedExperiment
+#' # sce$group_col <- factor(paste0(sce$sample_id, "_", sce$celltype))
+#' # grp_se <- get_groupby_factor(sce, groupby = "group_col")
+#'
 #' print(grp1)
 #' print(grp2)
 #' print(grp3)
 #'
 #' @seealso `\link{filter_segments_and_samples}`, `\link{test_all_groups_as}`
 #' @export
-get_groupby_factor <- function(x, groupby, sep = DELIMITER) {
-  # If x is SummarizedExperiment, extract its colData as a data.frame
-  if ("SummarizedExperiment" %in% class(x)) {
-    x <- as.data.frame(colData(x))
-  }
-  # Now x must be a data.frame; number of rows = number of samples/pseudobulks
-  n <- nrow(x)
+get_groupby_factor <- function(x, groupby, sep = "$") {
+  # Determine whether x is a SummarizedExperiment or a data.frame
+  is_se <- inherits(x, "SummarizedExperiment")
 
-  # If groupby is a vector whose length equals n, just return it
-  if (length(groupby) == n) {
+  # If SummarizedExperiment, extract its colData
+  if (is_se) {
+    coldat <- SummarizedExperiment::colData(x)
+    n <- ncol(x) # Number of samples / columns
+  } else if (is.data.frame(x)) {
+    coldat <- x
+    n <- nrow(x) # Number of samples / rows
+  } else {
+    stop(
+      "get_groupby_factor(): `x` must be either a data.frame or a SummarizedExperiment."
+    )
+  }
+
+  # 1. If groupby is a vector/factor of correct length, return it unchanged
+  if ((is.atomic(groupby) || is.factor(groupby)) && length(groupby) == n) {
     return(groupby)
   }
 
-  # Otherwise, check that every element of groupby is a column in x
-  if (all(groupby %in% colnames(x))) {
-    #    a) Select those columns: x[, groupby, drop = FALSE]
-    #    b) Paste them together row-wise with the separator “sep”
-    pasted <- do.call(paste, c(x[, groupby, drop = FALSE], sep = sep))
-    return(pasted)
+  # 2. If groupby is character vector of column names in coldat/data.frame
+  if (is.character(groupby)) {
+    # (a) If all elements of groupby match column names in coldat
+    if (all(groupby %in% colnames(coldat))) {
+      # Extract requested columns
+      subset_df <- as.data.frame(coldat[, groupby, drop = FALSE])
+
+      # If only one column, return that column directly (as factor or character)
+      if (length(groupby) == 1) {
+        return(subset_df[[1]])
+      }
+
+      # More than one column: if all are factors, use interaction(); else, paste()
+      are_factors <- vapply(subset_df, is.factor, logical(1))
+      if (all(are_factors)) {
+        # Combine factor columns into one factor via interaction
+        combined_factor <- interaction(subset_df, drop = TRUE, sep = sep)
+        return(combined_factor)
+      } else {
+        # Convert all columns to character and paste row-wise
+        pasted <- do.call(paste, c(lapply(subset_df, as.character), sep = sep))
+        return(pasted)
+      }
+    }
   }
 
+  # If we reach here, groupby was neither a length-n vector nor valid column names
   stop(
-    "`groupby` must be either a factor/vector of length ", n,
-    " or a column name (or names) in the provided data.frame."
+    "`groupby` must be either:\n",
+    " - A vector/factor of length ", n, ",\n",
+    " - A character scalar or vector of column names in the data."
   )
 }
 
