@@ -1898,3 +1898,46 @@ read_named_mm <- function(prefix) {
 
   return(mat)
 }
+
+
+#' Load single-cell AS counts (inclusion/exclusion) as sparse matrices
+#'
+#' Given a set of segment IDs and a file prefix, this function reads inclusion (`.i.mtx`)
+#'  and exclusion (`.e.mtx`) counts via `read_named_mm()`,
+#'  then subsets to only the requested segments and ensures consistent columns between `i` and `e`.
+#'
+#' @param segs A data.frame or `SummarizedExperiment`` whose row names are the segment IDs
+#'   to load. Only those segment IDs will be returned in the output matrices.
+#' @param path Character; file prefix (without extension) for inclusion/exclusion data.
+#'   The function expects files:
+#'   - `paste0(path, ".i.mtx")` (or `.i.mtx.gz`) and accompanying keys
+#'     for inclusion counts, and
+#'   - `paste0(path, ".e.mtx")` (or `.e.mtx.gz`) and accompanying keys
+#'     for exclusion counts.
+#'   Uses `read_named_mm()`` to read each.
+#'
+#' @return A list with two sparse matrices of class `dgCMatrix`:
+#'   - `i`: inclusion counts (rows = `rownames(segs)`, columns as in the `.i` matrix),
+#'   - `e`: exclusion counts (rows = `rownames(segs)`, columns matching the inclusion matrix).
+#'
+#' @details
+#' 1. Calls `read_named_mm(paste0(path, ".e"))`` to load the exclusion count matrix.
+#' 2. Calls `read_named_mm(paste0(path, ".i"))`` to load the inclusion count matrix.
+#' 3. Subsets both matrices to only rows matching `rownames(segs)``.
+#' 4. Ensures that the inclusion matrix uses the same column ordering as the exclusion matrix.
+#' 5. Returns a list `list(e = e_sub, i = i_sub)``.
+#'
+#' @seealso \code{\link{read_named_mm}}, \code{\link{load_introns_as_se}}
+#' @export
+load_sc_as <- function(segs, path) {
+  # Read exclusion counts
+  e_mat <- read_named_mm(paste0(path, ".e"))
+  # Read inclusion counts
+  i_mat <- read_named_mm(paste0(path, ".i"))
+  # Subset to only requested segment IDs
+  seg_ids <- rownames(segs)
+  e_sub <- e_mat[seg_ids, , drop = FALSE]
+  # Align inclusion columns to exclusion
+  i_sub <- i_mat[seg_ids, colnames(e_sub), drop = FALSE]
+  return(list(e = e_sub, i = i_sub))
+}
