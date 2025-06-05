@@ -2799,3 +2799,95 @@ get_dit_plot_size <- function(ccr) {
   width <- length(size) * 0.6 + 7
   c(height = height, width = width)
 }
+
+
+#' Compute pairwise correlation statistics between matrix columns
+#'
+#' Given two numeric matrices `x` and `y` (or a single matrix `x`),
+#'  this function computes Pearson correlation coefficients, sample sizes, and p-values for each pair of columns.
+#'
+#' @param x A numeric matrix with columns representing variables.
+#' @param y Optional numeric matrix; if omitted, `y <- x`. If provided, `ncol(y)` may differ from `ncol(x)`.
+#' @param ... Additional arguments passed to `stats::cor.test()` (e.g., `method`, `use`).
+#'
+#' @return A list with three matrices (dimensions = `ncol(x)` × `ncol(y)`):
+#'   - `e`: Pearson correlation coefficients between each pair of columns,
+#'   - `n`: sample sizes used in each correlation (number of non-NA pairs),
+#'   - `p`: p-values from `cor.test` for each pair.
+#'   Row names = `colnames(x)`, column names = `colnames(y)`.
+#'
+#' @details
+#' 1. If `y` is missing, set `y <- x`.
+#' 2. Initialize matrices `e`, `n`, and `p` with `NA` of size `ncol(x)` × `ncol(y)`.
+#' 3. For each column index `i` in `x` and `j` in `y`:
+#'    - Extract `x_i <- x[, i]` and `y_j <- y[, j]`.
+#'    - Compute `valid <- !is.na(x_i) & !is.na(y_j)`; let `n[i, j] <- sum(valid)`.
+#'    - If `n[i, j] > 2`, run
+#'      ```r
+#'      ct <- cor.test(x_i[valid], y_j[valid], ...)
+#'      ```
+#'      and set `e[i, j] <- ct$estimate`, `p[i, j] <- ct$p.value`.
+#'    - Otherwise, leave `e[i, j]` and `p[i, j]` as `NA`.
+#' 4. Return `list(e = e, n = n, p = p)`.
+#'
+#' @examples
+#' \dontrun{
+#' mat1 <- matrix(rnorm(100), ncol = 5)
+#' mat2 <- matrix(rnorm(100), ncol = 4)
+#' res <- my_cor_test(mat1, mat2)
+#' dim(res$e) # 5 × 4
+#' head(res$p)
+#' }
+#'
+#' @seealso \code{\link[stats]{cor.test}}
+#' @export
+my_cor_test <- function(x, y = NULL, ...) {
+  # If y is not provided, use x itself
+  if (is.null(y)) {
+    y <- x
+  }
+
+  # Ensure column names exist
+  xcn <- colnames(x)
+  ycn <- colnames(y)
+  if (is.null(xcn)) {
+    xcn <- paste0("X", seq_len(ncol(x)))
+    colnames(x) <- xcn
+  }
+  if (is.null(ycn)) {
+    ycn <- paste0("Y", seq_len(ncol(y)))
+    colnames(y) <- ycn
+  }
+
+  # Initialize result matrices
+  e_mat <- matrix(NA_real_,
+    nrow = ncol(x), ncol = ncol(y),
+    dimnames = list(xcn, ycn)
+  )
+  n_mat <- matrix(NA_integer_,
+    nrow = ncol(x), ncol = ncol(y),
+    dimnames = list(xcn, ycn)
+  )
+  p_mat <- matrix(NA_real_,
+    nrow = ncol(x), ncol = ncol(y),
+    dimnames = list(xcn, ycn)
+  )
+
+  # Loop over column pairs
+  for (i in seq_len(ncol(x))) {
+    for (j in seq_len(ncol(y))) {
+      x_i <- x[, i]
+      y_j <- y[, j]
+      valid <- !is.na(x_i) & !is.na(y_j)
+      n_obs <- sum(valid)
+      n_mat[i, j] <- n_obs
+      if (n_obs > 2) {
+        ct <- stats::cor.test(x_i[valid], y_j[valid], ...)
+        e_mat[i, j] <- ct$estimate
+        p_mat[i, j] <- ct$p.value
+      }
+    }
+  }
+
+  return(list(e = e_mat, n = n_mat, p = p_mat))
+}
