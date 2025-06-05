@@ -2749,3 +2749,53 @@ plot_mds <- function(xy, celltypes, ct2col, samples, ...) {
 
   invisible(NULL)
 }
+
+
+#' Compute recommended plot dimensions for a compareCluster result
+#'
+#' Given a `compareClusterResult` object from `clusterProfiler`,
+#'  this function returns a two‐element numeric vector giving height and width for plotting the results.
+#' The height scales with the number of clusters (up to 5 rows per cluster),
+#'  and the width scales with the number of clusters along the x‐axis.
+#' If `ccr` is `NULL`, returns `c(2, 2)`.
+#'
+#' @param ccr A `compareClusterResult` object (from `clusterProfiler::compareCluster()`), or `NULL`.
+#'
+#' @return A numeric vector of length 2:
+#'   - `height`: if `ccr` is `NULL`, `2`; otherwise `sum(pmin(5, size)) * 0.15 + 3`,
+#'     where `size` is the number of terms per cluster in `ccr@compareClusterResult`.
+#'   - `width`: if `ccr` is `NULL`, `2`; otherwise `length(size) * 0.6 + 7`,
+#'     where `length(size)` is the number of clusters with at least one term.
+#'
+#' @details
+#' 1. If `ccr` is `NULL`, returns `c(2, 2)`.
+#' 2. Otherwise:
+#'    - Extract `ccr@compareClusterResult$Cluster` to tabulate how many terms (rows) belong to each cluster.
+#'    - Cap each cluster’s row count at 5 via `pmin(5, size)`.
+#'    - Compute:
+#'      `height = sum(pmin(5, size)) * 0.15 + 3`,
+#'      `width  = length(size) * 0.6 + 7`, where `size` excludes clusters with zero terms.
+#'
+#' @examples
+#' \dontrun{
+#' dims1 <- get_dit_plot_size(ccr) # for a valid compareClusterResult
+#' dims2 <- get_dit_plot_size(NULL) # returns c(2, 2)
+#' }
+#'
+#' @seealso \code{\link{dotplot}}
+#' @export
+get_dit_plot_size <- function(ccr) {
+  # If NULL, return default (2, 2)
+  if (is.null(ccr)) {
+    return(c(2, 2))
+  }
+  # Extract cluster assignments for each term
+  clust_tbl <- table(ccr@compareClusterResult$Cluster)
+  # Keep clusters with at least one term
+  size <- clust_tbl[clust_tbl > 0]
+  # Compute height: sum of min(5, size) * 0.15 + 3
+  height <- sum(pmin(5, size)) * 0.15 + 3
+  # Compute width: number of clusters * 0.6 + 7
+  width <- length(size) * 0.6 + 7
+  c(height = height, width = width)
+}
