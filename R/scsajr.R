@@ -2013,3 +2013,118 @@ get_dpsi <- function(data, groupby, min_cov = 50) {
   rownames(result_df) <- rownames(data)
   return(result_df)
 }
+
+
+#' Find nearest constitutive exons for a given segment
+#'
+#' Within a `SummarizedExperiment` of segments, this function identifies the nearest
+#'  upstream and downstream “constant” exons (segments) for a given segment ID (`sid`).
+#' A constant exon is defined as one where the overall PSI (summed across all samples) is `NA` or ≥ `psi_thr`.
+#' The search is restricted to segments belonging to the same gene.
+#'
+#' @param se A `SummarizedExperiment` where `rowRanges(se)` has metadata columns:
+#'   `gene_id`, `start`, `end`, `strand`, and `sites`.
+#'   The assays `i` and `e` are used to compute summed PSI.
+#' @param sid Character; the segment ID (rownames of `se`) for which to find nearest exons.
+#' @param psi_thr Numeric between 0 and 1; constant exons are those where
+#'   `sum(i) / (sum(i) + sum(e)) ≥ psi_thr` or are `NA`. Default is `0.95`.
+#'
+#' @return A named character vector of length 2, with names:
+#'   - `up`: the segment ID of the nearest upstream constant exon (or `NA` if none),
+#'   - `down`: the segment ID of the nearest downstream constant exon (or `NA` if none).
+#'
+#' @details
+#' 1. Subset `se` to only segments belonging to the same gene as `sid`.
+#' 2. Compute summed inclusion (`i_sum`) and exclusion (`e_sum`) counts across all samples:
+#'     ```r
+#'     i_sum <- rowSums(assay(se, "i")[same_gene, , drop = FALSE])
+#'     e_sum <- rowSums(assay(se, "e")[same_gene, , drop = FALSE])
+#'     psi_all <- i_sum / (i_sum + e_sum)
+#'     ```
+#'    Any segment with `psi_all ≥ psi_thr` or `is.na(psi_all)` is considered “constant.”
+#' 3. Among constant segments, define:
+#'     - “up” candidates: `sites` ∈ `c("ad", "sd")`
+#'     - “down” candidates: `sites` ∈ `c("ad", "ae")`
+#' 4. Order segments by genomic coordinate (`start`) in the gene’s transcriptional direction:
+#'     - If `strand == "-"`, use descending `start`; otherwise ascending.
+#' 5. Find the position of `sid` in that ordered list, then select the nearest constant exon
+#'    before (`up`) and after (`down`) in that order.
+#' 6. If the gene’s strand is negative (`"-"`), swap the `up` and `down` results in the final output.
+#'
+#' @seealso \code{\link{plot_segment_coverage}}, \code{\link{get_dpsi}}
+#' @export
+find_nearest_constant_exons <- function(se, sid, psi_thr = 0.95) {
+  # 1. Verify that sid exists
+  if (!(sid %in% rownames(se))) {
+    stop("Segment ID '", sid, "' not found in SummarizedExperiment.")
+  }
+
+  # Extract rowRanges as a data.frame
+  seg_df <- as.data.frame(SummarizedExperiment::rowRanges(se))
+  # Identify the gene of interest
+  gene_id <- seg_df[sid, "gene_id"]
+  # Subset to all segments in this gene
+  same_gene_idx <- which(seg_df$gene_id == gene_id)
+  sub_df <- seg_df[same_gene_idx, , drop = FALSE]
+
+  # 2. Compute summed inclusion/exclusion counts for these segments
+  i_sub <- SummarizedExperiment::assay(se, "i")[same_gene_idx, , drop = FALSE]
+  e_sub <- SummarizedExperiment::assay(se, "e")[same_gene_idx, , drop = FALSE]
+  i_sum <- Matrix::rowSums(i_sub)
+  e_sum <- Matrix::rowSums(e_sub)
+  psi_all <- i_sum / (i_sum + e_sum)
+
+  # 3. Identify constant segments (psi ≥ psi_thr or NA)
+  constant_flag <- is.na(psi_all) | (psi_all >= psi_thr)
+
+  # Identify up/down candidates within the gene
+  sites_vec <- sub_df$sites
+  up_cands_idx <- same_gene_idx[which(constant_flag & sites_vec %in% c("ad", "sd"))]
+  down_cands_idx <- same_gene_idx[which(constant_flag & sites_vec %in% c("ad", "ae"))]
+
+  # 4. Order segments by start coordinate respecting strand
+  strand_val <- seg_df[sid, "strand"]
+  # Get start positions for same-gene segments
+  starts <- sub_df$start
+  if (strand_val == "-") {
+    order_rel <- order(-starts)
+  } else {
+    order_rel <- order(starts)
+  }
+  ordered_idx <- same_gene_idx[order_rel]
+
+  # 5. Locate position of sid in the ordered list
+  sid_pos <- which(ordered_idx == which(rownames(se) == sid))
+
+  # Find nearest upstream constant exon: index in ordered_idx < sid_pos ∩ up_cands_idx
+  up_id <- NA_character_
+  if (length(up_cands_idx) > 0) {
+    # Determine positions of up candidates in the ordered list
+    up_positions <- which(ordered_idx %in% up_cands_idx)
+    candidates_up <- up_positions[up_positions < sid_pos]
+    if (length(candidates_up) > 0) {
+      nearest_up_pos <- max(candidates_up)
+      up_id <- rownames(se)[ordered_idx[nearest_up_pos]]
+    }
+  }
+
+  # Find nearest downstream constant exon: index in ordered_idx > sid_pos ∩ down_cands_idx
+  down_id <- NA_character_
+  if (length(down_cands_idx) > 0) {
+    down_positions <- which(ordered_idx %in% down_cands_idx)
+    candidates_down <- down_positions[down_positions > sid_pos]
+    if (length(candidates_down) > 0) {
+      nearest_down_pos <- min(candidates_down)
+      down_id <- rownames(se)[ordered_idx[nearest_down_pos]]
+    }
+  }
+
+  # 6. If gene is on negative strand, swap up/down
+  if (strand_val == "-") {
+    tmp <- up_id
+    up_id <- down_id
+    down_id <- tmp
+  }
+
+  return(c(up = up_id, down = down_id))
+}
