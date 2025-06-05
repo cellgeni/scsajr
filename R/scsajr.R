@@ -1273,7 +1273,7 @@ calc_cpm <- function(se) {
   counts_mat <- SummarizedExperiment::assay(se, "counts")
 
   # Compute library size per sample (column sums)
-  lib_sizes <- colSums(counts_mat, na.rm = TRUE)
+  lib_sizes <- Matrix::colSums(counts_mat, na.rm = TRUE)
 
   # Avoid division by zero: if any lib_size == 0, set to NA to propagate NA in CPM
   lib_sizes[lib_sizes == 0] <- NA_real_
