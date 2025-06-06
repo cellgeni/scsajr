@@ -3335,3 +3335,75 @@ kmer_f <- function(seqs, k = 1) {
   tbl <- table(kmers)
   stats::setNames(as.numeric(tbl), names(tbl))
 }
+
+
+#' Find matches or reverse-complement matches of a pattern in a sequence
+#'
+#' Searches for a given pattern in a DNA sequence, optionally also searching for its
+#' reverse complement. Returns a data.frame of match positions and strand information.
+#'
+#' @param seq A single character string representing a DNA sequence.
+#' @param pattern A character string or regular expression to match.
+#' @param ignore_case Logical; if `TRUE`, matching is case-insensitive. Default is `TRUE`.
+#' @param do_reverse Logical; if `TRUE`, also search for reverse complement of `pattern`. Default is `TRUE`.
+#' @param ... Additional arguments passed to `gregexpr()`, such as `fixed = TRUE`.
+#'
+#' @return A data.frame with columns:
+#'   - `from`: start position of each match (1-based),
+#'   - `to`: end position of each match,
+#'   - `dir`: `"f"` for forward matches, `"r"` for reverse complement matches.
+#'   If no matches are found, returns `NULL`.
+#'
+#' @details
+#' 1. Uses `gregexpr(pattern, seq, ignore_case = ignore_case, ...)` to find all forward matches.
+#'    If `gregexpr` returns `-1`, no forward matches exist.
+#' 2. If `do_reverse = TRUE`, computes the reverse complement of `pattern` via `rcomp(pattern)` and searches again for reverse matches.
+#' 3. Combines forward and reverse matches into a single data.frame, sets column names, and returns.
+#'
+#' @examples
+#' \dontrun{
+#' seq <- "ATGCGTATGC"
+#' hits <- find_matches(seq, "ATG")
+#' print(hits)
+#' # Might return positions where "ATG" (forward) or "CAT" (reverse complement) occur
+#' }
+#'
+#' @seealso \code{\link{rcomp}}
+#' @export
+find_matches <- function(seq, pattern, ignore_case = TRUE, do_reverse = TRUE, ...) {
+  # Forward matches
+  fwd <- gregexpr(pattern, seq, ignore.case = ignore_case, ...)[[1]]
+  if (fwd[1] == -1) {
+    forward_df <- NULL
+  } else {
+    forward_df <- data.frame(
+      from = fwd,
+      to = fwd + attr(fwd, "match.length") - 1,
+      dir = "f",
+      stringsAsFactors = FALSE
+    )
+  }
+
+  # Reverse complement matches
+  if (do_reverse) {
+    rc_pattern <- rcomp(pattern)
+    rev_hits <- gregexpr(rc_pattern, seq, ignore.case = ignore_case, ...)[[1]]
+    if (rev_hits[1] == -1) {
+      reverse_df <- NULL
+    } else {
+      reverse_df <- data.frame(
+        from = rev_hits,
+        to = rev_hits + attr(rev_hits, "match.length") - 1,
+        dir = "r",
+        stringsAsFactors = FALSE
+      )
+    }
+    combined <- rbind(forward_df, reverse_df)
+    if (is.null(combined)) {
+      return(NULL)
+    }
+    return(combined)
+  }
+
+  return(forward_df)
+}
