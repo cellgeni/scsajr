@@ -3293,3 +3293,45 @@ find_rcomp_regions <- function(seq, n = 1, shuffle_times = 0, start = 0) {
 
   return(rc_matches_clean)
 }
+
+
+#' Compute k-mer frequencies from a set of sequences
+#'
+#' Counts occurrences of all k-mers of length `k` across a vector of DNA sequences.
+#'
+#' @param seqs A character vector of nucleotide sequences (may include `NA`), all in uppercase.
+#' @param k Integer; length of k-mers to tally. Default is 1.
+#'
+#' @return A named numeric vector of k-mer counts, where names are k-mer strings and values
+#'   are their frequencies across all input sequences.
+#'
+#' @details
+#' 1. Removes `NA` entries from `seqs`.
+#' 2. For each sequence, extracts all substrings of length `k` starting at positions
+#'    `1:(nchar(seq) - k + 1)`.
+#' 3. Aggregates counts of each k-mer across all sequences and returns a named vector.
+#'
+#' @examples
+#' \dontrun{
+#' seqs <- c("ATGCA", "TGCAT", NA, "ATGCA")
+#' kmer_counts <- kmer_f(seqs, k = 3)
+#' # Might return counts for "ATG", "TGC", "GCA", "CAT", etc.
+#' }
+#'
+#' @export
+kmer_f <- function(seqs, k = 1) {
+  seqs <- seqs[!is.na(seqs)]
+  if (length(seqs) == 0) {
+    return(stats::setNames(numeric(0), character(0)))
+  }
+  kmers <- character(0)
+  for (s in seqs) {
+    seq_length <- nchar(s)
+    if (seq_length >= k) {
+      starts <- seq(1, seq_length - k + 1, by = 1)
+      kmers <- c(kmers, substring(s, starts, starts + k - 1))
+    }
+  }
+  tbl <- table(kmers)
+  stats::setNames(as.numeric(tbl), names(tbl))
+}
