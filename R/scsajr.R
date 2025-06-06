@@ -2509,15 +2509,23 @@ plot_segment_coverage <- function(
   }
 
 
-  ### 3. CPM preparation (if sid + data_ge provided) — match original exactly
+  ### 3. CPM preparation
   cpm <- NULL
   if (!is.null(data_ge) && !is.null(data_as) && !is.null(sid)) {
     group_factor_ge <- get_groupby_factor(data_ge, groupby)
 
-    seg_df <- base::as.data.frame(SummarizedExperiment::rowRanges(data_as))
-    gid <- seg_df[sid, "gene_id"]
+    seg_df <- as.data.frame(SummarizedExperiment::rowRanges(data_as))
+    gid_chr <- seg_df[sid, "gene_id"]
 
-    cpm <- split(visutils::log10p1(SummarizedExperiment::assay(data_ge, "cpm")[gid, ]), group_factor_ge)[names(psi)]
+    cpm_mat <- SummarizedExperiment::assay(data_ge, "cpm")
+
+    gid_fac <- factor(gid_chr, levels = rownames(cpm_mat))
+    gid_idx <- as.integer(gid_fac)
+
+    cpm_row <- cpm_mat[gid_idx, , drop = FALSE]
+
+    tmp <- visutils::log10p1(cpm_row)
+    cpm <- split(tmp, group_factor_ge)[names(psi)]
   }
 
 
