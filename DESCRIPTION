@@ -22,6 +22,7 @@ Imports:
     graphics,
     plotCoverage,
     plyr,
+    universalmotif,
     visutils
 Suggests:
     DOSE

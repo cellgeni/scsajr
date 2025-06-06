@@ -3131,3 +3131,43 @@ rcomp <- function(x) {
   # Convert back to character vector
   as.character(rc_set)
 }
+
+
+#' Shuffle DNA sequences by k‐mer permutation
+#'
+#' Given a character vector of DNA sequences, this function generates shuffled versions
+#'  of each sequence that preserve k‐mer composition, using a user‐specified k value.
+#'
+#' @param seqs A character vector of DNA sequences (each element may include ambiguous bases).
+#' @param k Integer; length of k‐mers to preserve in the shuffle. Default is 1 (mononucleotide shuffle).
+#' @param ... Additional arguments passed to `universalmotif::shuffle_sequences()`, such as `seed`.
+#'
+#' @return A character vector of the same length as `seqs`, where each element is a shuffled
+#'    sequence preserving k‐mer composition.
+#'   If `seqs[i]` contains ambiguous bases, they are shuffled along with the sequence.
+#'
+#' @details
+#' 1. Converts each input sequence to uppercase.
+#' 2. Uses `Biostrings::BStringSet()` to construct a set of DNA strings.
+#' 3. Calls `universalmotif::shuffle_sequences()` on the `BStringSet`, specifying `k`.
+#' 4. Converts the shuffled `BStringSet` back to a character vector.
+#'
+#' @examples
+#' \dontrun{
+#' original_seqs <- c("ATGCCGTA", "NNAGTCA", "ccggttaa")
+#' shuffled <- shuffle_sequences(original_seqs, k = 2, seed = 42)
+#' print(shuffled)
+#' }
+#'
+#' @seealso \code{\link[Biostrings]{BStringSet}}, \code{\link[universalmotif]{shuffle_sequences}}
+#' @export
+shuffle <- function(seqs, k = 1, ...) {
+  # Convert to uppercase for consistency
+  upper_seqs <- toupper(seqs)
+  # Build a BStringSet for shuffling
+  bstrings <- Biostrings::BStringSet(upper_seqs)
+  # Perform k‐mer‐preserving shuffle
+  shuffled_set <- universalmotif::shuffle_sequences(bstrings, k = k, ...)
+  # Convert back to character vector
+  as.character(shuffled_set)
+}
