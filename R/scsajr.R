@@ -2511,26 +2511,14 @@ plot_segment_coverage <- function(
 
   # 3. CPM preparation if data_ge provided
   cpm <- NULL
+  gid <- NULL
   if (!is.null(data_ge) && !is.null(data_as) && !is.null(sid)) {
-    # (a) build group factor for data_ge
     group_factor_ge <- get_groupby_factor(data_ge, groupby)
-    # (b) pull gene_id as plain character
-    gid <- as.character(SummarizedExperiment::rowData(data_as)$gene_id[sid])
-    # (c) check whether gid is present among data_ge cpm–rows
-    cpm_mat <- SummarizedExperiment::assay(data_ge, "cpm")
-    if (!(gid %in% rownames(cpm_mat))) {
-      warning(
-        "In plot_segment_coverage(): gene '", gid,
-        "' not found among rownames of data_ge@assays[['cpm']]. Skipping CPM plot."
-      )
-      cpm <- NULL
-    } else {
-      # (d) now it’s safe to extract and split
-      tmp <- visutils::log10p1(cpm_mat[gid, , drop = FALSE])
-      cpm <- split(tmp, group_factor_ge)[names(psi)]
-    }
+    # gid <- SummarizedExperiment::rowRanges(data_as)[sid, "gene_id"]
+    gid <- as.data.frame(SummarizedExperiment::rowRanges(data_as))[sid, "gene_id"]
+    cpm_vals <- visutils::log10p1(SummarizedExperiment::assay(data_ge, "cpm")[gid, , drop = FALSE])
+    cpm <- split(cpm_vals, group_factor_ge)[names(psi)]
   }
-
 
   # 4. Determine genomic coordinates
   if (!is.null(sid) && !is.null(data_as)) {
