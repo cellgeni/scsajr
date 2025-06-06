@@ -2737,10 +2737,11 @@ plot_segment_coverage <- function(
   if (!is.null(psi) && !is.null(cpm)) {
     lncol <- ceiling(n_groups / 30)
     graphics::par(mar = c(3, 8 * lncol, 3, 0), xpd = NA)
+
     mean_cpm <- sapply(cpm, mean)
     mean_psi <- sapply(psi, mean, na.rm = TRUE)
 
-    # Combine into a data.frame (rownames = group labels)
+    # Build a data.frame: row names = group labels
     df_vis <- data.frame(
       l10CPM = mean_cpm,
       PSI = mean_psi,
@@ -2748,8 +2749,9 @@ plot_segment_coverage <- function(
       stringsAsFactors = FALSE
     )
 
-    visutils::plotVisium(df_vis,
-      ylim = c(0, 1),
+    visutils::plotVisium(
+      v = df_vis,
+      labels = rownames(df_vis),
       type = "p",
       xaxt = "s",
       yaxt = "s",
@@ -2760,9 +2762,10 @@ plot_segment_coverage <- function(
       cex = 2,
       xaxs = "r",
       yaxs = "r",
+      ylim = c(0, 1),
       legend.args = list(
-        x = graphics::grconvertX(0, "ndc", "user"),
-        y = graphics::grconvertY(1, "npc", "user"),
+        x    = graphics::grconvertX(0, "ndc", "user"),
+        y    = graphics::grconvertY(1, "npc", "user"),
         ncol = lncol
       )
     )
