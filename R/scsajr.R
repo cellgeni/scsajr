@@ -2561,15 +2561,25 @@ plot_segment_coverage <- function(
 
   # 5. Prepare GTF subset for transcript model
   if (!is.null(sid)) {
-    gtf <- gtf[gtf$gene_id == SummarizedExperiment::rowRanges(data_as)[sid, "gene_id"], ]
+    # Convert rowRanges(data_as) to data.frame, then extract gene_id, start, end
+    seg_df <- as.data.frame(SummarizedExperiment::rowRanges(data_as))
+    target_gid <- seg_df[sid, "gene_id"]
+    # Subset GTF to only that gene (character comparison)
+    gtf <- gtf[gtf$gene_id == target_gid, ]
   }
   gtf$exon.col <- "black"
   gtf$cds.col <- "black"
   if (!is.null(sid)) {
-    f <- gtf$start <= seg_ranges[sid, "end"] & gtf$stop >= seg_ranges[sid, "start"]
-    gtf$exon.col[f] <- "red"
-    gtf$cds.col[f] <- "red"
+    # Extract the numeric coordinates from seg_df
+    seg_df <- as.data.frame(SummarizedExperiment::rowRanges(data_as))
+    seg_start <- seg_df[sid, "start"]
+    seg_end <- seg_df[sid, "end"]
+    # Highlight only exons overlapping the segment
+    overlap_idx <- (gtf$start <= seg_end) & (gtf$stop >= seg_start)
+    gtf$exon.col[overlap_idx] <- "red"
+    gtf$cds.col[overlap_idx] <- "red"
   }
+
 
   # 6. Auto‐detect celltypes if missing
   if (is.null(celltypes) && !is.null(psi)) {
