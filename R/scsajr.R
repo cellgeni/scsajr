@@ -2891,3 +2891,103 @@ my_cor_test <- function(x, y = NULL, ...) {
 
   return(list(e = e_mat, n = n_mat, p = p_mat))
 }
+
+
+#' Annotate exons with splice site sequences from a FASTA
+#'
+#' For each exon entry in a GTF data.frame, this function assigns:
+#'   - `exon_number`: position of the exon in the transcript (1-based),
+#'   - `transc_exon_count`: total number of exons in the transcript,
+#'   - `asite`: sequence around the acceptor site,
+#'   - `dsite`: sequence around the donor site.
+#'
+#' @param gtf A data.frame of GTF entries with columns:
+#'   - `transcript_id` (identifier for each transcript),
+#'   - `feature` (e.g., `"exon"`),
+#'   - `chr_id` (chromosome),
+#'   - `start`, `stop` (numeric genomic coordinates),
+#'   - `strand` (`"+"`, `"-"`, or `"*"`).
+#'   Rows may include non-exon features; only rows where `feature == "exon"` will receive exon numbers.
+#' @param fa A named list of DNAString objects (FASTA) indexed by chromosome (matching `chr_id`),
+#'   suitable for extracting sequence via `get_site_seq()`.
+#'
+#' @return The input `gtf` data.frame with added columns:
+#'   - `exon_number`: integer index of the exon within its transcript (NA if not an exon),
+#'   - `transc_exon_count`: total exons in that transcript (NA if not an exon),
+#'   - `asite`: string sequence flanking the acceptor (5′) splice site (NA if not an exon),
+#'   - `dsite`: string sequence flanking the donor (3′) splice site (NA if not an exon).
+#'
+#' @details
+#' 1. Splits `gtf` by `transcript_id`.
+#' 2. For each transcript:
+#'    - Orders rows by `start` ascending (if `strand == "+"`) or descending (if `"-"`).
+#'    - For rows with `feature == "exon"`, assigns `exon_number` from 1 to `n_exons` and
+#'      sets `transc_exon_count = n_exons`.
+#' 3. Initializes `asite` and `dsite` as `NA`.
+#' 4. For exonic rows (`feature == "exon"`):
+#'    - If `strand == "+"`,
+#'      - `asite <- get_site_seq(chr_id, start, mars = c(12, 5), fa, rev = FALSE)`,
+#'      - `dsite <- get_site_seq(chr_id, stop,  mars = c(3, 5), fa, rev = FALSE)`.
+#'    - If `strand == "-"`,
+#'      - `asite <- get_site_seq(chr_id, stop,  mars = c(5, 12), fa, rev = TRUE)`,
+#'      - `dsite <- get_site_seq(chr_id, start, mars = c(5, 3),  fa, rev = TRUE)`.
+#'
+#' @seealso \code{\link{get_site_seq}}
+#' @export
+annotate_exons <- function(gtf, fa) {
+  # Preserve original row order via index
+  gtf$inx <- seq_len(nrow(gtf))
+
+  # Split GTF by transcript_id
+  split_list <- split(gtf, gtf$transcript_id)
+
+  # Process each transcript
+  split_list <- lapply(split_list, function(df) {
+    # Determine exon rows
+    exon_mask <- df$feature == "exon"
+    if (any(exon_mask)) {
+      # Order exons by start, adjusting for strand
+      if (all(df$strand[exon_mask] == "-")) {
+        exon_order <- order(df$start[exon_mask], decreasing = TRUE)
+      } else {
+        exon_order <- order(df$start[exon_mask])
+      }
+      n_exons <- sum(exon_mask)
+      # Assign exon_number and transc_exon_count
+      df$exon_number[exon_mask] <- seq_len(n_exons)[exon_order]
+      df$transc_exon_count[exon_mask] <- n_exons
+    }
+    return(df)
+  })
+
+  # Recombine and restore original order
+  gtf <- do.call(rbind, split_list)
+  gtf <- gtf[order(gtf$inx), ]
+  gtf$inx <- NULL
+
+  # Initialize asite and dsite
+  gtf$asite <- NA_character_
+  gtf$dsite <- NA_character_
+
+  # Compute splice site sequences for each exon row
+  exon_idx <- which(gtf$feature == "exon")
+  for (i in exon_idx) {
+    chr <- gtf$chr_id[i]
+    pos1 <- gtf$start[i]
+    pos2 <- gtf$stop[i]
+    strand <- gtf$strand[i]
+    if (strand == "+") {
+      # Acceptor: 12 bp upstream, 5 bp downstream of start
+      gtf$asite[i] <- get_site_seq(chr, pos1, mars = c(12, 5), fa, rev = FALSE)
+      # Donor: 3 bp upstream, 5 bp downstream of stop
+      gtf$dsite[i] <- get_site_seq(chr, pos2, mars = c(3, 5), fa, rev = FALSE)
+    } else if (strand == "-") {
+      # Acceptor (reverse): 5 bp upstream, 12 bp downstream of stop
+      gtf$asite[i] <- get_site_seq(chr, pos2, mars = c(5, 12), fa, rev = TRUE)
+      # Donor (reverse): 5 bp upstream, 3 bp downstream of start
+      gtf$dsite[i] <- get_site_seq(chr, pos1, mars = c(5, 3), fa, rev = TRUE)
+    }
+  }
+
+  return(gtf)
+}
