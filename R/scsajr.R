@@ -2515,7 +2515,7 @@ plot_segment_coverage <- function(
   if (!is.null(data_ge) && !is.null(data_as) && !is.null(sid)) {
     group_factor_ge <- get_groupby_factor(data_ge, groupby)
     gid <- SummarizedExperiment::rowRanges(data_as)[sid, "gene_id"]
-    cpm_vals <- visutils::log10p1(SummarizedExperiment::assay(data_ge, "cpm")[gid, , drop = FALSE])
+    cpm_vals <- visutils::log10p1(SummarizedExperiment::assay(data_ge, "cpm")[gid, ])
     cpm <- split(cpm_vals, group_factor_ge)[names(psi)]
   }
 
