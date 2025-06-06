@@ -2672,6 +2672,47 @@ plot_segment_coverage <- function(
 }
 
 
+#' Subset a coverage object to a specified genomic window
+#'
+#' Given a coverage object (a list with components `x`, `cov`, `start`, `end`, and `juncs`),
+#' this function filters the coverage and junctions to only include data within `[start, stop]`.
+#'
+#' @param cov A coverage object (list) containing at least:
+#'   - `x`: numeric vector of genomic positions,
+#'   - `cov`: numeric vector or Rle of coverage values at those positions,
+#'   - `start`, `end`: numeric scalars indicating the current coverage bounds,
+#'   - `juncs`: data.frame of junctions with numeric columns `start` and `end`.
+#' @param start Numeric; new window start coordinate.
+#' @param stop Numeric; new window stop coordinate.
+#'
+#' @return The same coverage object `cov`, but with:
+#'   - `cov$cov` and `cov$x` filtered to positions `x >= start & x <= stop`,
+#'   - `cov$start` set to `start`, `cov$end` set to `stop`,
+#'   - `cov$juncs` filtered to rows where `(juncs$start <= stop & juncs$end >= start)`.
+#'
+#' @examples
+#' \dontrun{
+#' # Given cov with positions 1:1000 and junctions spanning various ranges:
+#' cov_window <- subset_cov(cov, start = 100, stop = 200)
+#' }
+#'
+#' @export
+subset_cov <- function(cov, start, stop) {
+  # Filter coverage vector and positions
+  pos_filter <- cov$x >= start & cov$x <= stop
+  cov$cov <- cov$cov[pos_filter]
+  cov$x <- cov$x[pos_filter]
+  # Update stored start/end
+  cov$start <- start
+  cov$end <- stop
+  # Filter junctions overlapping the window
+  cov$juncs <- cov$juncs[
+    cov$juncs$start <= stop & cov$juncs$end >= start, ,
+    drop = FALSE
+  ]
+  return(cov)
+}
+
 #' Plot MDS with group connections and labels
 #'
 #' Given two-dimensional coordinates for samples (e.g., output of `cmdscale()`),
