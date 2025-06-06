@@ -3065,3 +3065,35 @@ get_site_seq <- function(chr, pos, mars, fa, rev = FALSE, as_string = TRUE, to_u
     return(res_list)
   }
 }
+
+#' Plot sequence logo from aligned sequences
+#'
+#' Generates a sequence logo from a set of aligned nucleotide sequences, using information content.
+#'
+#' @param seq A character vector of aligned sequences. Missing values (`NA`) are removed.
+#' @param stack_height Function to compute stack height; default is `DiffLogo::informationContent`.
+#' @param ... Additional arguments passed to `DiffLogo::seqLogo()`.
+#'
+#' @return Invisibly returns `NULL`; draws the sequence logo in the active graphics device.
+#'
+#' @details
+#' 1. Removes any `NA` values from `seq`.
+#' 2. Converts remaining sequences to uppercase.
+#' 3. Computes a position weight matrix (PWM) via `DiffLogo::getPwmFromAlignment()`.
+#' 4. Plots the sequence logo using `DiffLogo::seqLogo()` with the specified `stack_height`.
+#'
+#' @examples
+#' \dontrun{
+#' aligned_seqs <- c("ATGCA", "ATGGA", "ATGTA", NA, "ATGCA")
+#' plot_logo(aligned_seqs)
+#' }
+#'
+#' @seealso \code{\link[DiffLogo]{seqLogo}}, \code{\link[DiffLogo]{getPwmFromAlignment}}
+#' @export
+plot_logo <- function(seq, stack_height = DiffLogo::informationContent, ...) {
+  # Remove NA sequences, convert to uppercase
+  clean_seq <- toupper(seq[!is.na(seq)])
+  # Compute PWM from alignment and plot logo
+  pwm <- DiffLogo::getPwmFromAlignment(clean_seq)
+  DiffLogo::seqLogo(pwm, stack_height = stack_height, ...)
+}
