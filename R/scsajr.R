@@ -2511,14 +2511,30 @@ plot_segment_coverage <- function(
 
   # 3. CPM preparation if data_ge provided
   cpm <- NULL
-  gid <- NULL
   if (!is.null(data_ge) && !is.null(data_as) && !is.null(sid)) {
     group_factor_ge <- get_groupby_factor(data_ge, groupby)
-    # gid <- SummarizedExperiment::rowRanges(data_as)[sid, "gene_id"]
-    gid <- as.data.frame(SummarizedExperiment::rowRanges(data_as))[sid, "gene_id"]
-    cpm_vals <- visutils::log10p1(SummarizedExperiment::assay(data_ge, "cpm")[gid, , drop = FALSE])
-    cpm <- split(cpm_vals, group_factor_ge)[names(psi)]
+
+    # Extract gid using the “old” style
+    seg_df <- as.data.frame(SummarizedExperiment::rowRanges(data_as))
+    gid <- seg_df[sid, "gene_id"]
+
+    # Grab the CPM assay and check row names
+    cpm_mat <- SummarizedExperiment::assay(data_ge, "cpm")
+    if (!(gid %in% rownames(cpm_mat))) {
+      stop(
+        "plot_segment_coverage() error: gene_id '", gid,
+        "' not found in rownames of data_ge@assays[['cpm']].\n",
+        "  gene_id from data_as: ", gid, "\n",
+        "  Available genes in CPM assay (first 10): ",
+        paste0(head(rownames(cpm_mat), 10), collapse = ", "), " ..."
+      )
+    }
+
+    # If we get here, gid matches
+    tmp <- visutils::log10p1(cpm_mat[gid, , drop = FALSE])
+    cpm <- split(tmp, group_factor_ge)[names(psi)]
   }
+
 
   # 4. Determine genomic coordinates
   if (!is.null(sid) && !is.null(data_as)) {
