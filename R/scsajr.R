@@ -3155,7 +3155,7 @@ rcomp <- function(x) {
 #' @examples
 #' \dontrun{
 #' original_seqs <- c("ATGCCGTA", "NNAGTCA", "ccggttaa")
-#' shuffled <- shuffle_sequences(original_seqs, k = 2, seed = 42)
+#' shuffled <- shuffle(original_seqs, k = 2, seed = 42)
 #' print(shuffled)
 #' }
 #'

@@ -33,7 +33,7 @@ of each sequence that preserve k‐mer composition, using a user‐specified k v
 \examples{
 \dontrun{
 original_seqs <- c("ATGCCGTA", "NNAGTCA", "ccggttaa")
-shuffled <- shuffle_sequences(original_seqs, k = 2, seed = 42)
+shuffled <- shuffle(original_seqs, k = 2, seed = 42)
 print(shuffled)
 }
 
