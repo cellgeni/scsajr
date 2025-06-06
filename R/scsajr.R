@@ -2713,6 +2713,33 @@ subset_cov <- function(cov, start, stop) {
   return(cov)
 }
 
+
+#' Read an RDS file if it exists, otherwise return NULL
+#'
+#' Attempts to read an RDS file from a given path. If the file does not exist,
+#' returns `NULL` without error.
+#'
+#' @param f Character; file path to the `.rds` file.
+#'
+#' @return The object returned by `readRDS(f)` if `file.exists(f) == TRUE`; otherwise `NULL`.
+#'
+#' @examples
+#' \dontrun{
+#' data_obj <- read_rds_if_exists("output/data.rds")
+#' if (is.null(data_obj)) {
+#'   message("No cached RDS found.")
+#' }
+#' }
+#'
+#' @export
+read_rds_if_exists <- function(f) {
+  if (file.exists(f)) {
+    return(readRDS(f))
+  }
+  return(NULL)
+}
+
+
 #' Plot MDS with group connections and labels
 #'
 #' Given two-dimensional coordinates for samples (e.g., output of `cmdscale()`),
