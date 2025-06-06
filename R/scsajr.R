@@ -3171,3 +3171,125 @@ shuffle <- function(seqs, k = 1, ...) {
   # Convert back to character vector
   as.character(shuffled_set)
 }
+
+
+#' Find reverse‐complement palindrome regions in a sequence
+#'
+#' Identifies regions in a DNA sequence where a k‐mer and its reverse complement appear,
+#' potentially extending into longer palindromic regions. Optionally shuffles the sequence
+#' before searching.
+#'
+#' @param seq A character string representing a DNA sequence (may include ambiguous bases).
+#' @param n Integer; initial k‐mer length to search for reverse complements. Default is 1.
+#' @param shuffle_times Integer; number of times to apply `shuffle()` to `seq` before searching.
+#'   If `shuffle_times = 0` (default), no shuffling is performed.
+#' @param start Integer; 1‐based offset to add to reported coordinates (useful if `seq` is a subsequence).
+#'   Default is 0.
+#'
+#' @return A data.frame of palindrome regions with columns:
+#'   - `fpos`: forward start position of the region (1‐based, plus `start` offset),
+#'   - `rpos`: reverse start position of the region (1‐based, plus `start` offset),
+#'   - `len`: length of the palindrome region.
+#'   Row names are constructed as `"fpos-rpos:len"`.
+#'   If no palindromic regions are found, returns `NULL`.
+#'
+#' @details
+#' 1. If `shuffle_times > 0`, replaces `seq` with its shuffled version via `shuffle(seq, k = shuffle_times)`.
+#' 2. Builds a data.frame `nmers` with two columns:
+#'    - `forward`: all `(length(seq) - n + 1)` k‐mers of length `n` starting at each position,
+#'    - `reverse`: the reverse complement of each `forward` k‐mer.
+#'    - `pos`: start positions `1:(length(seq) - n + 1)`.
+#' 3. Identifies all matching pairs `(fpos, rpos)` where `forward[fpos] == reverse[rpos]`.
+#' 4. Iteratively extends matches to longer palindromes (extending both ends) wherever possible.
+#' 5. Constructs `rc_nmers_clean`, a data.frame of unique palindrome regions with:
+#'    - `fpos`, `rpos` adjusted by `start`,
+#'    - `len` = final palindrome length.
+#'
+#' @examples
+#' \dontrun{
+#' seq <- "AGCTTTCGA"
+#' find_rcomp_regions(seq, n = 3)
+#' # Might find the 3‐mer "AGC" at pos 1 and its reverse complement "GCT" at pos 7, etc.
+#' }
+#'
+#' @seealso \code{\link{shuffle}}
+#' @export
+find_rcomp_regions <- function(seq, n = 1, shuffle_times = 0, start = 0) {
+  # Optionally shuffle sequence
+  if (shuffle_times > 0) {
+    seq <- shuffle(seq, k = shuffle_times)
+  }
+  # Build all n‐mers and their reverse complements
+  seq_length <- nchar(seq)
+  max_pos <- seq_length - n + 1
+  if (max_pos < 1) {
+    return(NULL)
+  }
+  nmers <- data.frame(
+    forward = substring(seq, 1:max_pos, n:max_pos + (n - 1)),
+    pos = 1:max_pos,
+    stringsAsFactors = FALSE
+  )
+  nmers$reverse <- rcomp(nmers$forward)
+
+  # Find all initial matching pairs
+  rc_matches <- NULL
+  for (i in seq_len(nrow(nmers))) {
+    matches <- which(nmers$reverse == nmers$forward[i])
+    if (length(matches) > 0) {
+      rc_matches <- rbind(rc_matches, data.frame(fpos = i, rpos = matches))
+    }
+  }
+  if (is.null(rc_matches)) {
+    return(NULL)
+  }
+
+  # Iteratively extend matches to longer palindromes
+  rc_matches_clean <- NULL
+  while (nrow(rc_matches) > 0) {
+    seed <- rc_matches[1, , drop = FALSE]
+    rc_matches <- rc_matches[-1, , drop = FALSE]
+    fpos <- seed$fpos
+    rpos <- seed$rpos
+    length_k <- n
+    repeat {
+      next_f <- fpos + length_k
+      next_r <- rpos - length_k
+      if (next_f > max_pos || next_r < 1) {
+        break
+      }
+      if (nmers$forward[next_f] == nmers$reverse[next_r]) {
+        # Remove extended pair from rc_matches if present
+        remove_idx <- which(rc_matches$fpos == next_f & rc_matches$rpos == next_r)
+        if (length(remove_idx) > 0) {
+          rc_matches <- rc_matches[-remove_idx, , drop = FALSE]
+        }
+        length_k <- length_k + 1
+      } else {
+        break
+      }
+    }
+    rc_matches_clean <- rbind(
+      rc_matches_clean,
+      data.frame(
+        fpos = fpos,
+        rpos = rpos - length_k + n,
+        len  = n + (length_k - n) * 2
+      )
+    )
+  }
+
+  # Filter to fpos <= rpos to avoid duplicates
+  rc_matches_clean <- rc_matches_clean[rc_matches_clean$fpos <= rc_matches_clean$rpos, ]
+  if (nrow(rc_matches_clean) == 0) {
+    return(NULL)
+  }
+  # Adjust positions by offset and set row names
+  rc_matches_clean$fpos <- rc_matches_clean$fpos + start
+  rc_matches_clean$rpos <- rc_matches_clean$rpos + start
+  rownames(rc_matches_clean) <- paste0(
+    rc_matches_clean$fpos, "-", rc_matches_clean$rpos, ":", rc_matches_clean$len
+  )
+
+  return(rc_matches_clean)
+}
