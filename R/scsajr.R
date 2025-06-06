@@ -2491,6 +2491,7 @@ plot_segment_coverage <- function(
     stop("To load coverage from BAM, `samples`, `barcodes`, and `groupby` are required.")
   }
 
+
   # 2. PSI preparation if sid + data_as provided
   psi <- NULL
   if (!is.null(sid) && !is.null(data_as)) {
@@ -2508,6 +2509,7 @@ plot_segment_coverage <- function(
     psi <- lapply(psi, stats::na.omit)
     psi <- psi[order(sapply(psi, mean, na.rm = TRUE))]
   }
+
 
   # 3. CPM preparation if data_ge provided
   cpm <- NULL
@@ -2559,6 +2561,7 @@ plot_segment_coverage <- function(
     }
   }
 
+
   # 5. Prepare GTF subset for transcript model
   if (!is.null(sid)) {
     # Convert rowRanges(data_as) to data.frame, then extract gene_id, start, end
@@ -2589,6 +2592,7 @@ plot_segment_coverage <- function(
     celltypes <- unique(barcodes[, groupby])
   }
 
+
   # 7. Build layout matrix
   #    If PSI present, allocate two left columns; if CPM, allocate one more
   n_groups <- length(celltypes)
@@ -2606,6 +2610,7 @@ plot_segment_coverage <- function(
   }
   graphics::layout(layout_matrix, widths = c(rep(1, ncol(layout_matrix) - 1), 3), heights = c(rep(1, nrow(layout_matrix) - 1), 4))
   graphics::par(bty = "n", tcl = -0.2, mgp = c(1.3, 0.3, 0), mar = c(0, 0.5, 0, 0), oma = oma, xpd = NA)
+
 
   # 8. Plot CPM boxplot if available _and_ contains at least one finite value
   if (!is.null(cpm)) {
@@ -2641,6 +2646,7 @@ plot_segment_coverage <- function(
     plot(1, t = "n", yaxs = "i", ylim = c(0.5, n_groups + 0.5), xlim = c(0, 1), yaxt = "n", xlab = "PSI", ylab = "")
     graphics::boxplot(psi, horizontal = TRUE, las = 1, add = TRUE, yaxt = if (is.null(cpm)) "s" else "n")
   }
+
 
   # 10. Coverage and junction plotting per group
   graphics::par(mar = c(0, 6, 1.1, 0), xpd = FALSE)
@@ -2698,9 +2704,23 @@ plot_segment_coverage <- function(
     graphics::abline(h = 0)
   }
 
-  # 11. Transcript model plot
+
+  # 11. Transcript model plot (only if GTF subset is nonempty)
   graphics::par(mar = c(3, 6, 0.2, 0))
-  plotCoverage::plotTranscripts(gtf, new = TRUE, exon.col = NA, cds.col = NA, xlim = c(start, stop))
+  if (nrow(gtf) > 0) {
+    plotCoverage::plotTranscripts(gtf,
+      new = TRUE,
+      exon.col = NA,
+      cds.col = NA,
+      xlim = c(start, stop)
+    )
+  } else {
+    # No transcripts available for this gene; draw an empty frame
+    plot.new()
+    title(main = paste0("No transcript annotation for gene '", target_gid, "'"), cex.main = 0.8)
+  }
+
+
 
   # 12. CPM vs PSI scatter if both present
   if (!is.null(psi) && !is.null(cpm)) {
@@ -2719,6 +2739,7 @@ plot_segment_coverage <- function(
       )
     )
   }
+
 
   # 13. Add main title across panels if sid is provided
   if (!is.null(sid)) {
