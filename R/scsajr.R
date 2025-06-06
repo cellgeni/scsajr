@@ -2705,19 +2705,31 @@ plot_segment_coverage <- function(
   }
 
 
-  # 11. Transcript model plot (only if GTF subset is nonempty)
+  # 11. Transcript model plot (only if valid transcripts exist)
   graphics::par(mar = c(3, 6, 0.2, 0))
-  if (nrow(gtf) > 0) {
-    plotCoverage::plotTranscripts(gtf,
+  # Check that 'gtf' has rows, has the 'transcript_id' column,
+  # and at least one non-NA transcript_id
+  if (nrow(gtf) > 0 &&
+    "transcript_id" %in% colnames(gtf) &&
+    any(!is.na(gtf$transcript_id))) {
+    plotCoverage::plotTranscripts(
+      gtf,
       new = TRUE,
       exon.col = NA,
       cds.col = NA,
       xlim = c(start, stop)
     )
   } else {
-    # No transcripts available for this gene; draw an empty frame
+    # No valid transcript annotation—draw an empty frame
     plot.new()
-    title(main = paste0("No transcript annotation for gene '", target_gid, "'"), cex.main = 0.8)
+    title(
+      main = paste0(
+        "No valid transcripts for gene '",
+        if (exists("target_gid")) target_gid else NA,
+        "'"
+      ),
+      cex.main = 0.8
+    )
   }
 
 
