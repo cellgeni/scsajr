@@ -2740,6 +2740,29 @@ read_rds_if_exists <- function(f) {
 }
 
 
+#' Print an informational message with a timestamp
+#'
+#' Prepends `"INFO [<timestamp>]: "` to the given `text` and prints to standard output.
+#'
+#' @param text Character; message text or format string.
+#' @param ... Additional values to append to `text` via `paste0()`.
+#'
+#' @return Invisibly returns `NULL`; prints `"INFO [YYYY-MM-DD HH:MM:SS]: "` followed by `text`.
+#'
+#' @examples
+#' \dontrun{
+#' log_info("Starting analysis for gene ", gene_id)
+#' }
+#'
+#' @export
+log_info <- function(text, ...) {
+  msg <- paste0(text, ...)
+  full_msg <- paste0("INFO [", Sys.time(), "]: ", msg)
+  message(full_msg)
+  invisible(NULL)
+}
+
+
 #' Plot MDS with group connections and labels
 #'
 #' Given two-dimensional coordinates for samples (e.g., output of `cmdscale()`),
