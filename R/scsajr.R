@@ -2750,7 +2750,7 @@ plot_segment_coverage <- function(
     )
 
     visutils::plotVisium(
-      v = df_vis,
+      df_vis,
       labels = rownames(df_vis),
       type = "p",
       xaxt = "s",
