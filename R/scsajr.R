@@ -2519,7 +2519,7 @@ plot_segment_coverage <- function(
 
     cpm_mat <- SummarizedExperiment::assay(data_ge, "cpm")
     # Exactly use base‐R’s subsetting: if gid is NA or not found, returns 1×n NA row silently
-    cpm_row <- cpm_mat[gid, , drop = FALSE]
+    cpm_row <- cpm_mat[gid, ]
 
     tmp <- visutils::log10p1(cpm_row)
     cpm <- split(tmp, group_factor_ge)[names(psi)]
