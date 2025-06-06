@@ -2509,21 +2509,26 @@ plot_segment_coverage <- function(
   }
 
 
-  ### 3. CPM preparation (if sid + data_ge provided) — match original exactly
+  ### 3. CPM preparation (reproduce old factor indexing behavior)
   cpm <- NULL
   if (!is.null(data_ge) && !is.null(data_as) && !is.null(sid)) {
     group_factor_ge <- get_groupby_factor(data_ge, groupby)
 
     seg_df <- as.data.frame(SummarizedExperiment::rowRanges(data_as))
-    gid <- seg_df[sid, "gene_id"]
+    gid_chr <- seg_df[sid, "gene_id"] # character NA or gene ID
 
     cpm_mat <- SummarizedExperiment::assay(data_ge, "cpm")
-    # Exactly use base‐R’s subsetting: if gid is NA or not found, returns 1×n NA row silently
-    cpm_row <- cpm_mat[gid, ]
+    # Convert gid_chr into a factor whose levels are CPM rownames:
+    gid_fac <- factor(gid_chr, levels = rownames(cpm_mat))
+    gid_idx <- as.integer(gid_fac) # NA_character_ → NA_integer_
+
+    # Now subsetting by numeric NA returns a row of NAs silently:
+    cpm_row <- cpm_mat[gid_idx, , drop = FALSE]
 
     tmp <- visutils::log10p1(cpm_row)
     cpm <- split(tmp, group_factor_ge)[names(psi)]
   }
+
 
 
   ### 4. Genomic coordinate determination (if sid + data_as)
