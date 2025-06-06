@@ -3097,3 +3097,37 @@ plot_logo <- function(seq, stack_height = DiffLogo::informationContent, ...) {
   pwm <- DiffLogo::getPwmFromAlignment(clean_seq)
   DiffLogo::seqLogo(pwm, stack_height = stack_height, ...)
 }
+
+
+#' Compute reverse complement of DNA sequences
+#'
+#' Given a character vector of nucleotide sequences, this function returns the reverse
+#' complement of each sequence, preserving ambiguous bases.
+#'
+#' @param x A character vector of DNA sequences (e.g., "ATGC").
+#'
+#' @return A character vector of the same length as `x`,
+#'   where each element is the reverse complement of the corresponding input sequence.
+#'
+#' @details
+#' 1. Splits each sequence into individual characters.
+#' 2. Uses `Biostrings::reverseComplement()` on a `BStringSet` constructed from `x`.
+#' 3. Converts the result back to a plain character string.
+#'
+#' @examples
+#' \dontrun{
+#' seqs <- c("ATGC", "NNAGT", "ccgg")
+#' rcomp(seqs)
+#' # Returns c("GCAT", "ACTNN", "CCGG")
+#' }
+#'
+#' @seealso \code{\link[Biostrings]{reverseComplement}}, \code{\link{shuffle}}
+#' @export
+rcomp <- function(x) {
+  # Convert to uppercase for consistency
+  upper_x <- toupper(x)
+  # Build a BStringSet and compute reverse complement
+  rc_set <- Biostrings::reverseComplement(Biostrings::BStringSet(upper_x))
+  # Convert back to character vector
+  as.character(rc_set)
+}
