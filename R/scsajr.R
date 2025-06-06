@@ -2520,18 +2520,26 @@ plot_segment_coverage <- function(
 
     # Grab the CPM assay and check row names
     cpm_mat <- SummarizedExperiment::assay(data_ge, "cpm")
-    if (!(gid %in% rownames(cpm_mat))) {
-      stop(
-        "plot_segment_coverage() error: gene_id '", gid,
-        "' not found in rownames of data_ge@assays[['cpm']].\n",
-        "  gene_id from data_as: ", gid, "\n",
-        "  Available genes in CPM assay (first 10): ",
-        paste0(head(rownames(cpm_mat), 10), collapse = ", "), " ..."
+    if (is.na(gid)) {
+      warning("gene_id is NA; producing an all-NA CPM vector")
+      # create a 1×n “all‐NA” row:
+      cpm_row <- matrix(NA_real_,
+        nrow = 1, ncol = ncol(cpm_mat),
+        dimnames = list(NA_character_, colnames(cpm_mat))
       )
+    } else {
+      # find the row in the CPM matrix (character match)
+      if (!(gid %in% rownames(cpm_mat))) {
+        warning("gene_id ", gid, " not found; producing all-NA CPM row")
+        cpm_row <- matrix(NA_real_,
+          nrow = 1, ncol = ncol(cpm_mat),
+          dimnames = list(gid, colnames(cpm_mat))
+        )
+      } else {
+        cpm_row <- cpm_mat[gid, , drop = FALSE]
+      }
     }
-
-    # If we get here, gid matches
-    tmp <- visutils::log10p1(cpm_mat[gid, , drop = FALSE])
+    tmp <- visutils::log10p1(cpm_row)
     cpm <- split(tmp, group_factor_ge)[names(psi)]
   }
 
