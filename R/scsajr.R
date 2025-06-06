@@ -2991,3 +2991,77 @@ annotate_exons <- function(gtf, fa) {
 
   return(gtf)
 }
+
+
+#' Extract sequence around a splice site from a genomic FASTA
+#'
+#' Retrieves a nucleotide sequence flanking a specified genomic position for one or more loci.
+#'
+#' @param chr Character vector of chromosome names (matching names in `fa`).
+#' @param pos Numeric vector of length equal to `chr`, specifying the genomic coordinate (1-based)  at the splice site for each locus.
+#' @param mars Integer vector of length 2, giving the number of bases to include upstream (`mars[1]`) and downstream (`mars[2]`) of the specified position.
+#' @param fa A named list of `DNAString` objects (e.g., from a BSgenome or a FASTA read into memory),
+#'   where names match chromosome names in `chr`. Used to extract raw sequence.
+#' @param rev Logical; if `TRUE`, the reverse complement of the extracted sequence is returned. Default is `FALSE`.
+#' @param as_string Logical; if `TRUE`, returns a single concatenated string per locus; if `FALSE`,
+#'   returns a list of single-character vectors. Default is `TRUE`.
+#' @param to_upper Logical; if `TRUE`, converts sequences to uppercase. Default is `TRUE`.
+#'
+#' @return If `as_string = TRUE`, a character vector of length `length(chr)`, where each element
+#'   is the concatenated sequence of length `mars[1] + mars[2] + 1` (position ± flanks).
+#'   If  `as_string = FALSE`, a list of character vectors (one per locus).
+#'
+#' @details
+#' For each index `i` in `seq_along(chr)`:
+#' 1. Extract bases from `fa[[chr[i]]]` in the range `(pos[i] - mars[1]):(pos[i] + mars[2])`.
+#' 2. If `rev = TRUE`, take the reverse complement of that subsequence.
+#' 3. If `as_string = TRUE`, paste the bases into a single string.
+#' 4. If `to_upper = TRUE`, convert to uppercase using `toupper()`.
+#'
+#' @examples
+#' \dontrun{
+#' # Suppose 'fa' is a list with FASTA sequences for chr1 and chr2:
+#' seq1 <- get_site_seq("chr1", 100000, mars = c(12, 5), fa, rev = FALSE)
+#' seq2 <- get_site_seq(c("chr1", "chr2"), c(100000, 200000), mars = c(5, 3), fa, rev = TRUE)
+#' }
+#'
+#' @export
+get_site_seq <- function(chr, pos, mars, fa, rev = FALSE, as_string = TRUE, to_upper = TRUE) {
+  # Initialize result list
+  res_list <- vector("list", length(chr))
+
+  for (i in seq_along(chr)) {
+    this_chr <- chr[i]
+    this_pos <- pos[i]
+    # Define start and end for extraction
+    start_pos <- this_pos - mars[1]
+    end_pos <- this_pos + mars[2]
+    # Extract raw sequence from FASTA; assume fa[[this_chr]] is a DNAString
+    subseq <- fa[[this_chr]][start_pos:end_pos]
+    # If reverse complement requested, do so
+    if (rev) {
+      subseq <- Biostrings::reverseComplement(subseq)
+    }
+    # If returning as a single string
+    if (as_string) {
+      seq_char <- as.character(subseq)
+      if (to_upper) {
+        seq_char <- toupper(seq_char)
+      }
+      res_list[[i]] <- seq_char
+    } else {
+      seq_vec <- strsplit(as.character(subseq), "")[[1]]
+      if (to_upper) {
+        seq_vec <- toupper(seq_vec)
+      }
+      res_list[[i]] <- seq_vec
+    }
+  }
+
+  # If as_string, collapse to character vector
+  if (as_string) {
+    return(unlist(res_list, use.names = FALSE))
+  } else {
+    return(res_list)
+  }
+}
