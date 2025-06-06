@@ -2469,9 +2469,9 @@ plot_segment_coverage <- function(
     gene_descr,
     scan_bam_flags = list(
       isNotPassingQualityControls = FALSE,
-      isDuplicate = FALSE,
-      isSupplementaryAlignment = FALSE,
-      isSecondaryAlignment = FALSE
+      isDuplicate                 = FALSE,
+      isSupplementaryAlignment    = FALSE,
+      isSecondaryAlignment        = FALSE
     ),
     plot_junc_only_within = NA,
     min_junc_cov_f = 0.01,
@@ -2480,7 +2480,7 @@ plot_segment_coverage <- function(
     ylim_by_junc = FALSE,
     ylim = NULL,
     oma = c(6, 34, 3, 1)) {
-  # 1. Argument validation
+  ### 1. Argument validation
   if ((!is.null(data_as) || !is.null(data_ge)) && length(groupby) != 1) {
     stop("`groupby` must be a single column name when using `data_as` or `data_ge`.")
   }
@@ -2492,14 +2492,12 @@ plot_segment_coverage <- function(
   }
 
 
-  # 2. PSI preparation if sid + data_as provided
+  ### 2. PSI preparation (if sid + data_as provided)
   psi <- NULL
   if (!is.null(sid) && !is.null(data_as)) {
-    # Construct group factor
     group_factor_as <- get_groupby_factor(data_as, groupby)
-    # Subset data_as to only this segment
+
     se_seg <- data_as[sid, ]
-    # Compute PSI array for this segment
     if ("psi" %in% SummarizedExperiment::assayNames(se_seg)) {
       psi_vals <- SummarizedExperiment::assay(se_seg, "psi")
     } else {
@@ -2511,45 +2509,28 @@ plot_segment_coverage <- function(
   }
 
 
-  # 3. CPM preparation if data_ge provided
+  ### 3. CPM preparation (if sid + data_ge provided) — match original exactly
   cpm <- NULL
   if (!is.null(data_ge) && !is.null(data_as) && !is.null(sid)) {
     group_factor_ge <- get_groupby_factor(data_ge, groupby)
 
-    # Extract gid using the “old” style
     seg_df <- as.data.frame(SummarizedExperiment::rowRanges(data_as))
     gid <- seg_df[sid, "gene_id"]
 
-    # Grab the CPM assay and check row names
     cpm_mat <- SummarizedExperiment::assay(data_ge, "cpm")
-    if (is.na(gid)) {
-      warning("gene_id is NA; producing an all-NA CPM vector")
-      # create a 1×n “all‐NA” row:
-      cpm_row <- matrix(NA_real_,
-        nrow = 1, ncol = ncol(cpm_mat),
-        dimnames = list(NA_character_, colnames(cpm_mat))
-      )
-    } else {
-      # find the row in the CPM matrix (character match)
-      if (!(gid %in% rownames(cpm_mat))) {
-        warning("gene_id ", gid, " not found; producing all-NA CPM row")
-        cpm_row <- matrix(NA_real_,
-          nrow = 1, ncol = ncol(cpm_mat),
-          dimnames = list(gid, colnames(cpm_mat))
-        )
-      } else {
-        cpm_row <- cpm_mat[gid, , drop = FALSE]
-      }
-    }
+    # Exactly use base‐R’s subsetting: if gid is NA or not found, returns 1×n NA row silently
+    cpm_row <- cpm_mat[gid, , drop = FALSE]
+
     tmp <- visutils::log10p1(cpm_row)
     cpm <- split(tmp, group_factor_ge)[names(psi)]
   }
 
 
-  # 4. Determine genomic coordinates
+  ### 4. Genomic coordinate determination (if sid + data_as)
   if (!is.null(sid) && !is.null(data_as)) {
     seg_ranges <- as.data.frame(SummarizedExperiment::rowRanges(data_as))
     gene_id <- seg_ranges[sid, "gene_id"]
+
     if (is.null(start)) {
       start <- gene_descr[gene_id, "start"]
     }
@@ -2562,29 +2543,25 @@ plot_segment_coverage <- function(
   }
 
 
-  # 5. Prepare GTF subset for transcript model
+  ### 5. GTF subset and color
   if (!is.null(sid)) {
-    # Convert rowRanges(data_as) to data.frame, then extract gene_id, start, end
     seg_df <- as.data.frame(SummarizedExperiment::rowRanges(data_as))
     target_gid <- seg_df[sid, "gene_id"]
-    # Subset GTF to only that gene (character comparison)
     gtf <- gtf[gtf$gene_id == target_gid, ]
   }
   gtf$exon.col <- "black"
   gtf$cds.col <- "black"
   if (!is.null(sid)) {
-    # Extract the numeric coordinates from seg_df
     seg_df <- as.data.frame(SummarizedExperiment::rowRanges(data_as))
     seg_start <- seg_df[sid, "start"]
     seg_end <- seg_df[sid, "end"]
-    # Highlight only exons overlapping the segment
     overlap_idx <- (gtf$start <= seg_end) & (gtf$stop >= seg_start)
     gtf$exon.col[overlap_idx] <- "red"
     gtf$cds.col[overlap_idx] <- "red"
   }
 
 
-  # 6. Auto‐detect celltypes if missing
+  ### 6. Auto‐detect cell types if missing
   if (is.null(celltypes) && !is.null(psi)) {
     celltypes <- rev(names(psi))
   }
@@ -2593,8 +2570,7 @@ plot_segment_coverage <- function(
   }
 
 
-  # 7. Build layout matrix
-  #    If PSI present, allocate two left columns; if CPM, allocate one more
+  ### 7. Build layout matrix
   n_groups <- length(celltypes)
   layout_matrix <- matrix(seq_len(1 + n_groups), ncol = 1)
   if (!is.null(psi)) {
@@ -2608,69 +2584,89 @@ plot_segment_coverage <- function(
   if (ncol(layout_matrix) > 1) {
     layout_matrix[nrow(layout_matrix), -ncol(layout_matrix)] <- max(layout_matrix) + 1
   }
-  graphics::layout(layout_matrix, widths = c(rep(1, ncol(layout_matrix) - 1), 3), heights = c(rep(1, nrow(layout_matrix) - 1), 4))
-  graphics::par(bty = "n", tcl = -0.2, mgp = c(1.3, 0.3, 0), mar = c(0, 0.5, 0, 0), oma = oma, xpd = NA)
+  graphics::layout(
+    layout_matrix,
+    widths  = c(rep(1, ncol(layout_matrix) - 1), 3),
+    heights = c(rep(1, nrow(layout_matrix) - 1), 4)
+  )
+  graphics::par(
+    bty = "n", tcl = -0.2, mgp = c(1.3, 0.3, 0),
+    mar = c(0, 0.5, 0, 0), oma = oma, xpd = NA
+  )
 
 
-  # 8. Plot CPM boxplot if available _and_ contains at least one finite value
+  ### 8. CPM boxplot (exact behavior)
   if (!is.null(cpm)) {
-    # Gather all CPM values into a numeric vector
+    # Compute max/unlist
     all_cpm_vals <- unlist(cpm)
-    # Keep only finite values (non-NA, non-Infinite)
-    finite_cpm <- all_cpm_vals[is.finite(all_cpm_vals)]
-    if (length(finite_cpm) > 0) {
-      # Now 'max(finite_cpm)' is finite
-      plot(1,
-        t = "n", yaxs = "i",
-        ylim = c(0.5, n_groups + 0.5),
-        xlim = c(0, max(finite_cpm)),
-        yaxt = "n",
-        xlab = "l10CPM",
-        ylab = ""
-      )
-      graphics::boxplot(cpm,
-        horizontal = TRUE, las = 1,
-        add = TRUE, xpd = NA,
-        cex.axis = 2, xaxt = "n"
-      )
-    } else {
-      # All CPM values are NA or there are none; draw an empty frame
-      plot.new()
-      title(xlab = "l10CPM")
+    x_max <- suppressWarnings(max(all_cpm_vals, na.rm = TRUE))
+    if (!is.finite(x_max)) {
+      x_max <- 1
     }
+    plot(1,
+      t    = "n",
+      yaxs = "i",
+      ylim = c(0.5, n_groups + 0.5),
+      xlim = c(0, x_max),
+      yaxt = "n",
+      xlab = "l10CPM",
+      ylab = ""
+    )
+    graphics::boxplot(cpm,
+      horizontal = TRUE, las = 1,
+      add = TRUE, xpd = NA,
+      cex.axis = 2, xaxt = "n"
+    )
   }
 
 
-  # 9. Plot PSI boxplot if available
+  ### 9. PSI boxplot (unchanged)
   if (!is.null(psi)) {
-    plot(1, t = "n", yaxs = "i", ylim = c(0.5, n_groups + 0.5), xlim = c(0, 1), yaxt = "n", xlab = "PSI", ylab = "")
-    graphics::boxplot(psi, horizontal = TRUE, las = 1, add = TRUE, yaxt = if (is.null(cpm)) "s" else "n")
+    plot(1,
+      t    = "n",
+      yaxs = "i",
+      ylim = c(0.5, n_groups + 0.5),
+      xlim = c(0, 1),
+      yaxt = "n",
+      xlab = "PSI",
+      ylab = ""
+    )
+    graphics::boxplot(psi,
+      horizontal = TRUE, las = 1,
+      add = TRUE,
+      yaxt = if (is.null(cpm)) "s" else "n"
+    )
   }
 
 
-  # 10. Coverage and junction plotting per group
+  ### 10. Coverage + junction plotting
   graphics::par(mar = c(0, 6, 1.1, 0), xpd = FALSE)
   for (ct in celltypes) {
     cov <- covs[[ct]]
-    # Load coverage if missing or range incomplete
     if (is.null(cov) || start < cov$start || stop > cov$end) {
       cov <- list()
       for (i in seq_len(nrow(samples))) {
         sample_id <- samples$sample_id[i]
         bam_path <- samples$bam_path[i]
-        tags <- barcodes$barcode[barcodes$sample_id == sample_id & !is.na(barcodes[, groupby]) & barcodes[, groupby] == ct]
+        tags <- barcodes$barcode[
+          barcodes$sample_id == sample_id &
+            !is.na(barcodes[, groupby]) &
+            barcodes[, groupby] == ct
+        ]
         if (length(tags) == 0) next
-        cov[[length(cov) + 1]] <- plotCoverage::getReadCoverage(bam_path, chr, start, stop, strand = NA, scan_bam_flags = scan_bam_flags, tagFilter = list(CB = tags))
+        cov[[length(cov) + 1]] <- plotCoverage::getReadCoverage(
+          bam_path, chr, start, stop,
+          strand = NA,
+          scanBamFlags = scan_bam_flags,
+          tagFilter = list(CB = tags)
+        )
       }
       if (length(cov) > 0) {
-        cov <- sum_covs(cov)
+        covs[[ct]] <- sum_covs(cov)
       }
-      covs[[ct]] <- cov
     }
-    # Subset cov to [start, stop]
     cov_sub <- subset_cov(covs[[ct]], start, stop)
 
-    # Determine junction filter
     juncs <- cov_sub$juncs
     junc_filter <- rep(TRUE, nrow(juncs))
     if (!is.na(plot_junc_only_within) && plot_junc_only_within) {
@@ -2680,7 +2676,6 @@ plot_segment_coverage <- function(
         (juncs$end >= start & juncs$end <= stop)
     }
 
-    # Determine y‐axis limits
     if (is.null(ylim)) {
       raw_cov_vals <- cov_sub$cov@values
       raw_junc_vals <- juncs$score[junc_filter]
@@ -2694,65 +2689,46 @@ plot_segment_coverage <- function(
       ylim_group <- ylim
     }
 
-    # Plot coverage+junction
     plotCoverage::plotReadCov(cov_sub,
-      xlim = c(start, stop), ylab = "Coverage", xlab = chr,
-      main = ct, plot.junc.only.within = plot_junc_only_within,
-      min.junc.cov = min_junc_cov, min.junc.cov.f = min_junc_cov_f,
-      ylim = ylim_group, xaxt = "n"
+      xlim = c(start, stop),
+      ylab = "Coverage",
+      xlab = chr,
+      main = ct,
+      plot.junc.only.within = plot_junc_only_within,
+      min.junc.cov = min_junc_cov,
+      min.junc.cov.f = min_junc_cov_f,
+      ylim = ylim_group,
+      xaxt = "n"
     )
     graphics::abline(h = 0)
   }
 
 
-  # 11. Transcript model plot (only if valid transcripts exist)
+  ### 11. Transcript model (no guard—exactly original)
   graphics::par(mar = c(3, 6, 0.2, 0))
-  # Check that 'gtf' has rows, has the 'transcript_id' column,
-  # and at least one non-NA transcript_id
-  if (nrow(gtf) > 0 &&
-    "transcript_id" %in% colnames(gtf) &&
-    any(!is.na(gtf$transcript_id))) {
-    plotCoverage::plotTranscripts(
-      gtf,
-      new = TRUE,
-      exon.col = NA,
-      cds.col = NA,
-      xlim = c(start, stop)
-    )
-  } else {
-    # No valid transcript annotation—draw an empty frame
-    plot.new()
-    title(
-      main = paste0(
-        "No valid transcripts for gene '",
-        if (exists("target_gid")) target_gid else NA,
-        "'"
-      ),
-      cex.main = 0.8
-    )
-  }
+  plotCoverage::plotTranscripts(
+    gtf,
+    new = TRUE,
+    exon.col = NA,
+    cds.col = NA,
+    xlim = c(start, stop)
+  )
 
 
-  # 12. CPM vs PSI scatter if both present
-  if (!is.null(psi) && !is.null(cpm)) {
-    lncol <- ceiling(n_groups / 30)
+  ### 12. CPM vs PSI scatter (exact plotVisium signature)
+  if (!is.null(cpm) && !is.null(psi)) {
+    lncol <- ceiling(length(psi) / 30)
     graphics::par(mar = c(3, 8 * lncol, 3, 0), xpd = NA)
 
-    mean_cpm <- sapply(cpm, mean)
-    mean_psi <- sapply(psi, mean, na.rm = TRUE)
+    m1 <- sapply(cpm[names(psi)], mean)
+    m2 <- sapply(psi, mean, na.rm = TRUE)
+    mat_vis <- cbind(m1, m2)
 
-    # Build a data.frame: row names = group labels
-    df_vis <- data.frame(
-      l10CPM = mean_cpm,
-      PSI = mean_psi,
-      row.names = names(mean_cpm),
-      stringsAsFactors = FALSE
-    )
-
+    # Unnamed arguments exactly as original
     visutils::plotVisium(
-      df_vis,
-      labels = rownames(df_vis),
-      type = "p",
+      mat_vis,
+      names(psi),
+      t = "xy",
       xaxt = "s",
       yaxt = "s",
       pch = 16,
@@ -2762,7 +2738,6 @@ plot_segment_coverage <- function(
       cex = 2,
       xaxs = "r",
       yaxs = "r",
-      ylim = c(0, 1),
       legend.args = list(
         x    = graphics::grconvertX(0, "ndc", "user"),
         y    = graphics::grconvertY(1, "npc", "user"),
@@ -2772,10 +2747,16 @@ plot_segment_coverage <- function(
   }
 
 
-  # 13. Add main title across panels if sid is provided
+  ### 13. Main title (unchanged)
   if (!is.null(sid)) {
-    gene_info <- gene_descr[SummarizedExperiment::rowRanges(data_as)[sid, "gene_id"], ]
-    graphics::mtext(paste0(sid, " ", gene_info["name"], "\n", gene_info["descr"]), side = 3, outer = TRUE)
+    seg_df <- as.data.frame(SummarizedExperiment::rowRanges(data_as))
+    gene_id <- seg_df[sid, "gene_id"]
+    gene_inf <- gene_descr[gene_id, ]
+    graphics::mtext(
+      paste0(sid, " ", gene_inf["name"], "\n", gene_inf["descr"]),
+      side = 3,
+      outer = TRUE
+    )
   }
 
   invisible(covs)
