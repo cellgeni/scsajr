@@ -2607,11 +2607,34 @@ plot_segment_coverage <- function(
   graphics::layout(layout_matrix, widths = c(rep(1, ncol(layout_matrix) - 1), 3), heights = c(rep(1, nrow(layout_matrix) - 1), 4))
   graphics::par(bty = "n", tcl = -0.2, mgp = c(1.3, 0.3, 0), mar = c(0, 0.5, 0, 0), oma = oma, xpd = NA)
 
-  # 8. Plot CPM boxplot if available
+  # 8. Plot CPM boxplot if available _and_ contains at least one finite value
   if (!is.null(cpm)) {
-    plot(1, t = "n", yaxs = "i", ylim = c(0.5, n_groups + 0.5), xlim = c(0, max(unlist(cpm))), yaxt = "n", xlab = "l10CPM", ylab = "")
-    graphics::boxplot(cpm, horizontal = TRUE, las = 1, add = TRUE, xpd = NA, cex.axis = 2, xaxt = "n")
+    # Gather all CPM values into a numeric vector
+    all_cpm_vals <- unlist(cpm)
+    # Keep only finite values (non-NA, non-Infinite)
+    finite_cpm <- all_cpm_vals[is.finite(all_cpm_vals)]
+    if (length(finite_cpm) > 0) {
+      # Now 'max(finite_cpm)' is finite
+      plot(1,
+        t = "n", yaxs = "i",
+        ylim = c(0.5, n_groups + 0.5),
+        xlim = c(0, max(finite_cpm)),
+        yaxt = "n",
+        xlab = "l10CPM",
+        ylab = ""
+      )
+      graphics::boxplot(cpm,
+        horizontal = TRUE, las = 1,
+        add = TRUE, xpd = NA,
+        cex.axis = 2, xaxt = "n"
+      )
+    } else {
+      # All CPM values are NA or there are none; draw an empty frame
+      plot.new()
+      title(xlab = "l10CPM")
+    }
   }
+
 
   # 9. Plot PSI boxplot if available
   if (!is.null(psi)) {
