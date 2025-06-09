@@ -403,7 +403,7 @@ get_groupby_factor <- function(x, groupby, sep = "$") {
 
       # If only one column, return that column directly (as factor or character)
       if (length(groupby) == 1) {
-        return(subset_df[[1]])
+        return(as.character(subset_df[[1]]))
       }
 
       # More than one column: if all are factors, use interaction(); else, paste()
