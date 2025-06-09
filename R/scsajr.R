@@ -1454,7 +1454,7 @@ make_summarized_experiment <- function(data_list, col_data) {
   meta_cols$strand <- NULL
 
   # Attach remaining columns as elementMetadata on row_ranges
-  S4Vectors::elementMetadata(row_ranges) <- meta_cols
+  S4Vectors::elementMetadata(row_ranges)[names(meta_cols)] <- meta_cols
 
   # 4. The remaining items in data_list are assays; ensure each is a matrix
   assay_list <- data_list
