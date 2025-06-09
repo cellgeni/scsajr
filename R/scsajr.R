@@ -2649,10 +2649,20 @@ plot_segment_coverage <- function(
     graphics::par(mar = c(3, 8 * lncol, 3, 0), xpd = NA)
     mean_cpm <- sapply(cpm, mean)
     mean_psi <- sapply(psi, mean, na.rm = TRUE)
-    visutils::plotVisium(cbind(mean_cpm, mean_psi),
+    visutils::plotVisium(
+      cbind(mean_cpm, mean_psi),
       ylim = c(0, 1),
-      labels = names(psi), type = "p", xaxt = "s", yaxt = "s",
-      pch = 16, xlab = "l10CPM", ylab = "PSI", bty = "n", cex = 2, xaxs = "r", yaxs = "r",
+      names(psi),
+      t = "xy",
+      xaxt = "s",
+      yaxt = "s",
+      pch = 16,
+      xlab = "l10CPM",
+      ylab = "PSI",
+      bty = "n",
+      cex = 2,
+      xaxs = "r",
+      yaxs = "r",
       legend.args = list(
         x = graphics::grconvertX(0, "ndc", "user"),
         y = graphics::grconvertY(1, "npc", "user"),
