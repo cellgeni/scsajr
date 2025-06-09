@@ -2496,7 +2496,7 @@ plot_segment_coverage <- function(
   if (!is.null(sid) && !is.null(data_as)) {
     # Construct group factor
     seg <- as.data.frame(SummarizedExperiment::rowRanges(data_as))
-    group_factor_as <- get_groupby_factor(seg, groupby)
+    group_factor_as <- get_groupby_factor(data_as, groupby)
     # Subset data_as to only this segment
     se_seg <- data_as[sid, ]
     # Compute PSI array for this segment
