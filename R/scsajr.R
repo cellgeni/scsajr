@@ -403,7 +403,7 @@ get_groupby_factor <- function(x, groupby, sep = "$") {
 
       # If only one column, return that column directly (as factor or character)
       if (length(groupby) == 1) {
-        return(subset_df[[1]])
+        return(as.character(coldat[[groupby]]))
       }
 
       # More than one column: if all are factors, use interaction(); else, paste()
@@ -1454,7 +1454,7 @@ make_summarized_experiment <- function(data_list, col_data) {
   meta_cols$strand <- NULL
 
   # Attach remaining columns as elementMetadata on row_ranges
-  S4Vectors::elementMetadata(row_ranges) <- meta_cols
+  S4Vectors::elementMetadata(row_ranges)[names(meta_cols)] <- meta_cols
 
   # 4. The remaining items in data_list are assays; ensure each is a matrix
   assay_list <- data_list
