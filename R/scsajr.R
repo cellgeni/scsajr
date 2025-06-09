@@ -378,7 +378,7 @@ get_groupby_factor <- function(x, groupby, sep = "$") {
 
   # If SummarizedExperiment, extract its colData
   if (is_se) {
-    coldat <- SummarizedExperiment::colData(x)
+    coldat <- SummarizedExperiment::as.data.frame(SummarizedExperiment::colData(x))
     n <- ncol(x) # Number of samples / columns
   } else if (is.data.frame(x)) {
     coldat <- x
@@ -399,7 +399,7 @@ get_groupby_factor <- function(x, groupby, sep = "$") {
     # (a) If all elements of groupby match column names in coldat
     if (all(groupby %in% colnames(coldat))) {
       # Extract requested columns
-      subset_df <- as.data.frame(coldat[, groupby, drop = FALSE])
+      subset_df <- SummarizedExperiment::as.data.frame(coldat[, groupby, drop = FALSE])
 
       # If only one column, return that column directly (as factor or character)
       if (length(groupby) == 1) {
@@ -483,7 +483,7 @@ test_all_groups_as <- function(
   # pv_df has columns: overdispersion, group (p‐value)
 
   # 3. Adjust p‐values (Benjamini-Hochberg)
-  pv_df <- as.data.frame(pv_df, stringsAsFactors = FALSE)
+  pv_df <- SummarizedExperiment::as.data.frame(pv_df, stringsAsFactors = FALSE)
   pv_df$group_fdr <- stats::p.adjust(pv_df$group, method = "BH")
 
   # 4. Compute delta‐PSI, low_state, high_state
@@ -561,7 +561,7 @@ test_pair_as <- function(
   # pv_df has columns: overdispersion, group
 
   # 4. Adjust p‐values (Benjamini-Hochberg)
-  pv_df <- as.data.frame(pv_df, stringsAsFactors = FALSE)
+  pv_df <- SummarizedExperiment::as.data.frame(pv_df, stringsAsFactors = FALSE)
   pv_df$fdr <- stats::p.adjust(pv_df$group, method = "BH")
 
   # 5. Compute PSI matrix for the two‐condition pseudobulk
@@ -1178,7 +1178,7 @@ pseudobulk <- function(
   }
 
   # 4. Build group-level metadata
-  meta <- as.data.frame(SummarizedExperiment::colData(se))
+  meta <- SummarizedExperiment::as.data.frame(SummarizedExperiment::colData(se))
   group_meta <- pseudobulk_metadata(meta, group_factor)
   # Reorder to match the order of columns in summed_assays (rownames of each summed matrix)
   group_meta <- group_meta[colnames(summed_assays[[1]]), , drop = FALSE]
@@ -2060,7 +2060,7 @@ find_nearest_constant_exons <- function(se, sid, psi_thr = 0.95) {
   }
 
   # Extract rowRanges as a data.frame
-  seg_df <- as.data.frame(SummarizedExperiment::rowRanges(se))
+  seg_df <- SummarizedExperiment::as.data.frame(SummarizedExperiment::rowRanges(se))
   # Identify the gene of interest
   gene_id <- seg_df[sid, "gene_id"]
   # Subset to all segments in this gene
@@ -2495,7 +2495,7 @@ plot_segment_coverage <- function(
   psi <- NULL
   if (!is.null(sid) && !is.null(data_as)) {
     # Construct group factor
-    seg <- as.data.frame(SummarizedExperiment::rowRanges(data_as))
+    seg <- SummarizedExperiment::as.data.frame(SummarizedExperiment::rowRanges(data_as))
     group_factor_as <- get_groupby_factor(data_as, groupby)
     # Subset data_as to only this segment
     se_seg <- data_as[sid, ]
