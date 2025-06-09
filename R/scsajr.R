@@ -3,9 +3,6 @@
 # Need to add package description
 # Need to figureout how to keep links in the Roxygen documentation
 
-DELIMITER <- "$"
-
-
 #' Filter segments and samples based on coverage and group criteria
 #'
 #' This function takes a `SummarizedExperiment` containing alternative splicing data
@@ -91,7 +88,7 @@ filter_segments_and_samples <- function(
   SummarizedExperiment::assay(pbas, "e") <- as.matrix(SummarizedExperiment::assay(pbas, "e"))
 
   # 'nna' = number of pseudobulks with total coverage >= min_cov
-  SummarizedExperiment::rowData(pbas)$nna <- rowSums((SummarizedExperiment::assay(pbas, "i") + SummarizedExperiment::assay(pbas, "e")) >= min_cov)
+  SummarizedExperiment::rowData(pbas)$nna <- Matrix::rowSums((SummarizedExperiment::assay(pbas, "i") + SummarizedExperiment::assay(pbas, "e")) >= min_cov)
 
 
   ## 3. Filter out segments (rows) that do not meet minimum coverage across pseudobulks
@@ -168,11 +165,6 @@ fit_as_glm <- function(
     return_pv = FALSE,
     overdisp = TRUE,
     disp_param = NULL) {
-  # Ensure plyr is available
-  if (!requireNamespace("plyr", quietly = TRUE)) {
-    stop("Please install the 'plyr' package to use fit_as_glm().")
-  }
-
   # Extract term names from the formula
   term_labels <- attr(stats::terms(formula), "term.labels")
 
@@ -252,7 +244,7 @@ fit_as_glm <- function(
 #' @param disp_param Optional numeric; if provided, use this as the dispersion parameter for the test.
 #'   Otherwise, estimate dispersion from `fit_obj`’s residuals.
 #' @param term_labels Character vector of term names (excluding the intercept) in the original formula, in the same order returned by `attr(terms(formula), "term.labels")`.
-#' @param seg_id Character scalar; segment identifier (row name) used in warning messages.
+#' @param seg_id Character; segment identifier (row name) used in warning messages.
 #'
 #' @return A numeric vector of length `length(term_labels) + 1`.
 #'   The first element is the dispersion estimate actually used (either `disp_param` or `summary(fit_obj)$dispersion`),
@@ -333,21 +325,26 @@ qbinom_lrt <- function(
 
 #' Determine grouping factor from a data.frame or SummarizedExperiment
 #'
-#' If `groupby` is a vector whose length matches the number of rows (or columns), this function treats it as the grouping factor directly.
-#' Otherwise, if `groupby` is one or more column names in a data.frame (or in `colData(se)`),
-#'  it pastes those columns together (with a delimiter) to form a grouping factor.
+#' If `groupby` is a vector (e.g., a factor) whose length matches the number of rows of a `data.frame` or the number of columns of a `SummarizedExperiment`, it is returned unchanged.
+#' Otherwise, if `groupby` is a character scalar or vector of column names present in the input,
+#'  those columns are pasted together row-wise (for a `data.frame`) or via `interaction()` (for factor columns in`SummarizedExperiment::colData()`) to form a single grouping factor.
 #'
 #' @param x Either a `SummarizedExperiment` (in which case its `colData()` is used) or a `data.frame` whose rows correspond to samples/pseudobulks.
 #' @param groupby Either:
 #'   \itemize{
-#'     \item A vector of length `nrow(x)`: treated as the grouping factor directly.
-#'     \item A character scalar or vector of column names in `x`: those columns are pasted (row‐wise) with a delimiter to form the grouping factor.
+#'     \item A vector of length `nrow(x)` or `ncol(x)` (for `SummarizedExperiment`):: treated as the grouping factor directly.
+#'     \item A character scalar or vector of column names in `x` (or in `colData(x)` if `x` is a `SummarizedExperiment`):
+#'            those columns are concatenated row-wise (using `paste()` or `interaction()`) to form a grouping factor.
 #'   }
 #' @param sep Character string used to separate pasted values when `groupby` is multiple column names. Default is `"\$"`.
 #'
 #' @return A character vector (or factor) of length `nrow(x)`, representing the grouping factor.
 #'   If `groupby` was already the same length as `nrow(x)`, it is returned unchanged.
 #'   Otherwise, it pastes together columns of `x`.
+#'
+#' @return A vector (typically a factor or character vector) of length equal to `nrow(x)` (for `data.frame`) or `ncol(x)` (for `SummarizedExperiment`), representing the grouping factor.
+#'         If `groupby` was already the correct length, it is returned unchanged.
+#'         Otherwise, it pastes or interacts specified columns of `x`.
 #'
 #' @examples
 #' df <- data.frame(
@@ -356,7 +353,7 @@ qbinom_lrt <- function(
 #'   batch = c("X", "Y", "X", "Y")
 #' )
 #'
-#' # Case 1: groupby is a factor vector
+#' # Case 1: groupby is a factor vector of correct length
 #' grp1 <- get_groupby_factor(df, groupby = c("A", "A", "B", "B"))
 #'
 #' # Case 2: groupby is one column name
@@ -365,36 +362,69 @@ qbinom_lrt <- function(
 #' # Case 3: groupby is multiple column names
 #' grp3 <- get_groupby_factor(df, groupby = c("celltype", "batch"))
 #'
+#' # When x is a SummarizedExperiment
+#' # sce$group_col <- factor(paste0(sce$sample_id, "_", sce$celltype))
+#' # grp_se <- get_groupby_factor(sce, groupby = "group_col")
+#'
 #' print(grp1)
 #' print(grp2)
 #' print(grp3)
 #'
 #' @seealso `\link{filter_segments_and_samples}`, `\link{test_all_groups_as}`
 #' @export
-get_groupby_factor <- function(x, groupby, sep = DELIMITER) {
-  # If x is SummarizedExperiment, extract its colData as a data.frame
-  if ("SummarizedExperiment" %in% class(x)) {
-    x <- as.data.frame(SummarizedExperiment::colData(x))
-  }
-  # Now x must be a data.frame; number of rows = number of samples/pseudobulks
-  n <- nrow(x)
+get_groupby_factor <- function(x, groupby, sep = "$") {
+  # Determine whether x is a SummarizedExperiment or a data.frame
+  is_se <- inherits(x, "SummarizedExperiment")
 
-  # If groupby is a vector whose length equals n, just return it
-  if (length(groupby) == n) {
+  # If SummarizedExperiment, extract its colData
+  if (is_se) {
+    coldat <- SummarizedExperiment::as.data.frame(SummarizedExperiment::colData(x))
+    n <- ncol(x) # Number of samples / columns
+  } else if (is.data.frame(x)) {
+    coldat <- x
+    n <- nrow(x) # Number of samples / rows
+  } else {
+    stop(
+      "get_groupby_factor(): `x` must be either a data.frame or a SummarizedExperiment."
+    )
+  }
+
+  # 1. If groupby is a vector/factor of correct length, return it unchanged
+  if ((is.atomic(groupby) || is.factor(groupby)) && length(groupby) == n) {
     return(groupby)
   }
 
-  # Otherwise, check that every element of groupby is a column in x
-  if (all(groupby %in% colnames(x))) {
-    #    a) Select those columns: x[, groupby, drop = FALSE]
-    #    b) Paste them together row-wise with the separator “sep”
-    pasted <- do.call(paste, c(x[, groupby, drop = FALSE], sep = sep))
-    return(pasted)
+  # 2. If groupby is character vector of column names in coldat/data.frame
+  if (is.character(groupby)) {
+    # (a) If all elements of groupby match column names in coldat
+    if (all(groupby %in% colnames(coldat))) {
+      # Extract requested columns
+      subset_df <- SummarizedExperiment::as.data.frame(coldat[, groupby, drop = FALSE])
+
+      # If only one column, return that column directly (as factor or character)
+      if (length(groupby) == 1) {
+        return(as.character(coldat[[groupby]]))
+      }
+
+      # More than one column: if all are factors, use interaction(); else, paste()
+      are_factors <- vapply(subset_df, is.factor, logical(1))
+      if (all(are_factors)) {
+        # Combine factor columns into one factor via interaction
+        combined_factor <- interaction(subset_df, drop = TRUE, sep = sep)
+        return(combined_factor)
+      } else {
+        # Convert all columns to character and paste row-wise
+        pasted <- do.call(paste, c(lapply(subset_df, as.character), sep = sep))
+        return(pasted)
+      }
+    }
   }
 
+  # If we reach here, groupby was neither a length-n vector nor valid column names
   stop(
-    "`groupby` must be either a factor/vector of length ", n,
-    " or a column name (or names) in the provided data.frame."
+    "`groupby` must be either:\n",
+    " - A vector/factor of length ", n, ",\n",
+    " - A character scalar or vector of column names in the data."
   )
 }
 
@@ -453,11 +483,11 @@ test_all_groups_as <- function(
   # pv_df has columns: overdispersion, group (p‐value)
 
   # 3. Adjust p‐values (Benjamini-Hochberg)
-  pv_df <- as.data.frame(pv_df, stringsAsFactors = FALSE)
+  pv_df <- SummarizedExperiment::as.data.frame(pv_df, stringsAsFactors = FALSE)
   pv_df$group_fdr <- stats::p.adjust(pv_df$group, method = "BH")
 
   # 4. Compute delta‐PSI, low_state, high_state
-  dpsi_df <- get_dpsi(pbas, group_factor)
+  dpsi_df <- get_dpsi(pbas, group_factor, min_cov = 50)
 
   # 5. Combine results: ensure matching row order
   res <- cbind(
@@ -531,7 +561,7 @@ test_pair_as <- function(
   # pv_df has columns: overdispersion, group
 
   # 4. Adjust p‐values (Benjamini-Hochberg)
-  pv_df <- as.data.frame(pv_df, stringsAsFactors = FALSE)
+  pv_df <- SummarizedExperiment::as.data.frame(pv_df, stringsAsFactors = FALSE)
   pv_df$fdr <- stats::p.adjust(pv_df$group, method = "BH")
 
   # 5. Compute PSI matrix for the two‐condition pseudobulk
@@ -657,64 +687,6 @@ find_marker_as <- function(
     fdr = fdr_mat,
     dpsi = dpsi_mat
   ))
-}
-
-
-#' Select markers from all‐celltype test results
-#'
-#' From a data.frame of per‐segment results comparing all groups simultaneously (e.g., output of `test_all_groups_as()`),
-#'   this function selects only those segments that pass both a group‐level FDR threshold and a minimum delta‐PSI threshold.
-#' It returns a data.frame with one row per qualifying segment.
-#'
-#' @param all_celltype_df A data.frame (rownames = segment IDs) (output of `test_all_groups_as()`), containing columns:
-#'   \describe{
-#'     \item{overdispersion}{Estimated dispersion from each segment’s GLM.}
-#'     \item{group}{Raw p‐value from the likelihood‐ratio test for the `group` term.}
-#'     \item{group_fdr}{Benjamini‐Hochberg adjusted FDR (across all segments).}
-#'     \item{low_state}{Group label with lowest mean PSI (from `get_dpsi()`).}
-#'     \item{high_state}{Group label with highest mean PSI.}
-#'     \item{dpsi}{Difference in mean PSI between `high_state` and `low_state`.}
-#'   }
-#' @param fdr_thr Numeric: false discovery rate cutoff (default: 0.05).
-#' @param dpsi_thr Numeric: minimum absolute delta PSI cutoff (default: 0.1).
-#'
-#' @return A data.frame with one row per segment satisfying `group_fdr < fdr_thr` and `dpsi > dpsi_thr`.
-#'   Columns in the returned data.frame:
-#'   \describe{
-#'     \item{`pv`}{Raw p‐value from the likelihood‐ratio test for the group effect (copied from `all_celltype_df$group`).}
-#'     \item{`fdr`}{Benjamini‐Hochberg adjusted FDR (copied from `all_celltype_df$group_fdr`).}
-#'     \item{`dpsi`}{Delta‐PSI (copied from `all_celltype_df$dpsi`).}
-#'     \item{`seg_id`}{Segment ID (rownames of `all_celltype_df`).}
-#'     \item{`group`}{Group label with highest mean PSI (copied from `all_celltype_df$high_state`).}
-#'   }
-#'   Row names of the returned data.frame are the segment IDs.
-#'
-#' @examples
-#' \dontrun{
-#' # Assume 'all_test' is output of test_all_groups_as(), with rownames = segment IDs.
-#' sig_df <- select_markers_from_all_celltype_test(all_test, fdr_thr = 0.05, dpsi_thr = 0.2)
-#' }
-#'
-#' @export
-select_markers_from_all_celltype_test <- function(
-    all_celltype_df,
-    fdr_thr = 0.05,
-    dpsi_thr = 0.1) {
-  # Identify segments passing both thresholds
-  keep <- (all_celltype_df$group_fdr < fdr_thr) & (all_celltype_df$dpsi > dpsi_thr)
-  subset_df <- all_celltype_df[keep, , drop = FALSE]
-
-  # Build result data.frame
-  result <- data.frame(
-    pv = subset_df$group,
-    fdr = subset_df$group_fdr,
-    dpsi = subset_df$dpsi,
-    seg_id = rownames(subset_df),
-    group = subset_df$high_state,
-    row.names = rownames(subset_df),
-    stringsAsFactors = FALSE
-  )
-  return(result)
 }
 
 
@@ -849,6 +821,63 @@ select_markers <- function(
   return(result)
 }
 
+#' Select markers from all‐celltype test results
+#'
+#' From a data.frame of per‐segment results comparing all groups simultaneously (e.g., output of `test_all_groups_as()`),
+#'   this function selects only those segments that pass both a group‐level FDR threshold and a minimum delta‐PSI threshold.
+#' It returns a data.frame with one row per qualifying segment.
+#'
+#' @param all_celltype_df A data.frame (rownames = segment IDs) (output of `test_all_groups_as()`), containing columns:
+#'   \describe{
+#'     \item{overdispersion}{Estimated dispersion from each segment’s GLM.}
+#'     \item{group}{Raw p‐value from the likelihood‐ratio test for the `group` term.}
+#'     \item{group_fdr}{Benjamini‐Hochberg adjusted FDR (across all segments).}
+#'     \item{low_state}{Group label with lowest mean PSI (from `get_dpsi()`).}
+#'     \item{high_state}{Group label with highest mean PSI.}
+#'     \item{dpsi}{Difference in mean PSI between `high_state` and `low_state`.}
+#'   }
+#' @param fdr_thr Numeric: false discovery rate cutoff (default: 0.05).
+#' @param dpsi_thr Numeric: minimum absolute delta PSI cutoff (default: 0.1).
+#'
+#' @return A data.frame with one row per segment satisfying `group_fdr < fdr_thr` and `dpsi > dpsi_thr`.
+#'   Columns in the returned data.frame:
+#'   \describe{
+#'     \item{`pv`}{Raw p‐value from the likelihood‐ratio test for the group effect (copied from `all_celltype_df$group`).}
+#'     \item{`fdr`}{Benjamini‐Hochberg adjusted FDR (copied from `all_celltype_df$group_fdr`).}
+#'     \item{`dpsi`}{Delta‐PSI (copied from `all_celltype_df$dpsi`).}
+#'     \item{`seg_id`}{Segment ID (rownames of `all_celltype_df`).}
+#'     \item{`group`}{Group label with highest mean PSI (copied from `all_celltype_df$high_state`).}
+#'   }
+#'   Row names of the returned data.frame are the segment IDs.
+#'
+#' @examples
+#' \dontrun{
+#' # Assume 'all_test' is output of test_all_groups_as(), with rownames = segment IDs.
+#' sig_df <- select_markers_from_all_celltype_test(all_test, fdr_thr = 0.05, dpsi_thr = 0.2)
+#' }
+#'
+#' @export
+select_markers_from_all_celltype_test <- function(
+    all_celltype_df,
+    fdr_thr = 0.05,
+    dpsi_thr = 0.1) {
+  # Identify segments passing both thresholds
+  keep <- (all_celltype_df$group_fdr < fdr_thr) & (all_celltype_df$dpsi > dpsi_thr)
+  subset_df <- all_celltype_df[keep, , drop = FALSE]
+
+  # Build result data.frame
+  result <- data.frame(
+    pv = subset_df$group,
+    fdr = subset_df$group_fdr,
+    dpsi = subset_df$dpsi,
+    seg_id = rownames(subset_df),
+    group = subset_df$high_state,
+    row.names = rownames(subset_df),
+    stringsAsFactors = FALSE
+  )
+  return(result)
+}
+
 
 #' Select combined marker segments from per‐group and all‐groups tests
 #'
@@ -940,8 +969,8 @@ select_all_markers <- function(
   # Split by group
   split_by_group <- split(combined, combined$group)
   trimmed_list <- lapply(split_by_group, function(df_group) {
-    # Order by descending |dpsi|
-    df_group <- df_group[order(abs(df_group$dpsi), decreasing = TRUE), , drop = FALSE]
+    # Order by is_marker & descending |dpsi| (Prioritise select_markers())
+    df_group <- df_group[order(df_group$is_marker, abs(df_group$dpsi), decreasing = TRUE), , drop = FALSE]
     # Trim to at most n rows
     if (nrow(df_group) > n) {
       df_group <- df_group[seq_len(n), , drop = FALSE]
@@ -1149,7 +1178,7 @@ pseudobulk <- function(
   }
 
   # 4. Build group-level metadata
-  meta <- as.data.frame(SummarizedExperiment::colData(se))
+  meta <- SummarizedExperiment::as.data.frame(SummarizedExperiment::colData(se))
   group_meta <- pseudobulk_metadata(meta, group_factor)
   # Reorder to match the order of columns in summed_assays (rownames of each summed matrix)
   group_meta <- group_meta[colnames(summed_assays[[1]]), , drop = FALSE]
@@ -1173,7 +1202,7 @@ pseudobulk <- function(
 #'
 #' @param se A `SummarizedExperiment` with assays named `i` (inclusion counts) and `e` (exclusion counts).
 #'   Rows are segments; columns are pseudobulk samples.
-#' @param min_cov Integer scalar; minimum total junction coverage (`i + e`) required to compute a valid PSI.
+#' @param min_cov Integer; minimum total junction coverage (`i + e`) required to compute a valid PSI.
 #'   For any `i + e < min_cov`, the PSI is set to `NA`. Default is `10`.
 #'
 #' @return A numeric matrix of dimensions `nrow(se)` × `ncol(se)` where each entry is the PSI value
@@ -1244,7 +1273,7 @@ calc_cpm <- function(se) {
   counts_mat <- SummarizedExperiment::assay(se, "counts")
 
   # Compute library size per sample (column sums)
-  lib_sizes <- colSums(counts_mat, na.rm = TRUE)
+  lib_sizes <- Matrix::colSums(counts_mat, na.rm = TRUE)
 
   # Avoid division by zero: if any lib_size == 0, set to NA to propagate NA in CPM
   lib_sizes[lib_sizes == 0] <- NA_real_
@@ -1425,7 +1454,7 @@ make_summarized_experiment <- function(data_list, col_data) {
   meta_cols$strand <- NULL
 
   # Attach remaining columns as elementMetadata on row_ranges
-  S4Vectors::elementMetadata(row_ranges) <- meta_cols
+  S4Vectors::elementMetadata(row_ranges)[names(meta_cols)] <- meta_cols
 
   # 4. The remaining items in data_list are assays; ensure each is a matrix
   assay_list <- data_list
@@ -1439,4 +1468,2042 @@ make_summarized_experiment <- function(data_list, col_data) {
   )
 
   return(se_obj)
+}
+
+
+#' Plot heatmaps of alternative splicing (PSI) and gene expression (CPM) for selected markers
+#'
+#' This function takes pseudobulk splicing data (`pbas`) and gene expression data (`pbge`),
+#' along with a set of marker segments, and plots two side‐by‐side heatmaps:
+#'   1. PSI values (percent spliced‐in) for each marker segment across groups.
+#'   2. CPM values (counts per million) for corresponding genes across groups.
+#'
+#' @param pbas A `SummarizedExperiment` of pseudobulk splicing data. Must contain:
+#'   - `assay(pbas, "i")` and `assay(pbas, "e")` (inclusion/exclusion counts).
+#'   - `assay(pbas, "psi")` (percent spliced‐in) or else `psi` will be calculated internally.
+#'   Rows are segment IDs; columns are group labels (matching `colData(pbas)` grouping factor).
+#' @param pbge A `SummarizedExperiment` of pseudobulk gene expression data. Must contain:
+#'   - `assay(pbge, "cpm")` (counts per million).
+#'   Rows are gene IDs; columns are group labels matching `pbas`.
+#' @param groupby A grouping label (column name in `colData(pbas)` and `colData(pbge)`)
+#'   used to aggregate and order groups. Can be a single column name or a vector of column names;
+#'   see `get_groupby_factor()` for details.
+#' @param markers A data.frame of selected marker segments. Must contain columns:
+#'   - `seg_id` (segment ID matching `rownames(pbas)`)
+#'   - `dpsi` (delta‐PSI sign and magnitude; positive means inclusion in higher group)
+#'   - `group` (group label for which this segment is a marker)
+#'   - `is_marker` (logical; `TRUE` for top per‐group markers, `FALSE` for background markers)
+#'   Optionally, `markers` may contain a column `gene_id` if plotting gene names.
+#' @param psi_scale Logical; if `TRUE`, PSI values are scaled (z‐score) per segment (column of heatmap). Default is `FALSE` (raw PSI in (0,1)).
+#' @param cpm_scale Logical; if `TRUE`, CPM values are standardized (z‐score) per gene (column of heatmap). Default is `TRUE`.
+#' @param group_colors Optional named vector mapping group labels to colors. If `NULL`, default colors are assigned via `char2col()`.
+#' @param col_palette A vector of colors (length ≥ 2) for heatmap coloring (e.g., `rev(hcl.colors(100, "RdYlBu"))`). Default is `rev(hcl.colors(100, "RdYlBu"))`.
+#' @param gene_names_col Optional character. If `markers` has a column with gene names (e.g., `"name"`),
+#'   specify it here so gene names appear in the column labels of the heatmap. Default is `NULL`.
+#' @param ... Additional arguments passed to underlying plotting functions (`imageWithText`, `plotColorLegend2`).
+#'
+#' @return Invisibly returns `NULL`. The function draws two heatmaps in the current graphics device:
+#'   - Left: PSI heatmap, with rows = groups, columns = marker segments.
+#'   - Right: CPM heatmap, with rows = groups, columns = corresponding genes.
+#'   If scaling is applied (`psi_scale` or `cpm_scale`), legends reflect z‐score ranges.
+#'
+#' @details
+#' 1. Calls `pseudobulk()` on `pbas` and `pbge` to ensure group‐level assays (`psi` and `cpm`) exist.
+#' 2. Extracts a PSI matrix (`psi_mat`) of size (n_groups × n_markers) for `markers$seg_id`.
+#'    - If `markers$dpsi` is negative, flips PSI to `1 − PSI` so that all markers align directionally.
+#' 3. Determines group ordering via classical Multidimensional Scaling (MDS) on `psi_mat` correlations, so that similar groups cluster together.
+#' 4. Reorders `markers` by `markers$group` matching MDS order, then by `dpsi`.
+#' 5. Extracts CPM matrix (`cpm_mat`) of size (n_groups × n_genes) for genes corresponding to `markers$seg_id`.
+#'    - If `gene_names_col` is provided, column names become `paste0(gene_name, ":", seg_id)`.
+#' 6. Scales `psi_mat` and/or `cpm_mat` if requested (`psi_scale`, `cpm_scale`).
+#' 7. Prepares row annotations (`row_anns`) with:
+#'    - `ct`: group label
+#'    - `is_marker`: color `gray`/`white` for `TRUE`/`FALSE`
+#'    - `psi_flipped`: whether a marker’s `dpsi < 0` (flipped direction; same gray/white legend).
+#' 8. Draws two heatmaps side‐by‐side:
+#'    - **PSI heatmap**: calls `imageWithText()` with `psi_mat`, coloring by `col_palette`, showing `ct` annotation.
+#'    - **PSI legend**: if `psi_scale = FALSE`, calls `plotColorLegend2()` to display color scale (0,1) or z‐score limits.
+#'    - **CPM heatmap**: calls `imageWithText()` with `cpm_mat`, similar annotations.
+#'    - **CPM legend**: calls `plotColorLegend2()` to show z‐score or raw CPM scale.
+#'
+#' @seealso \code{\link{pseudobulk}}, \code{\link{calc_psi}}, \code{\link{calc_cpm}}, \code{\link{get_groupby_factor}}
+#' @export
+marker_heatmap <- function(
+    pbas,
+    pbge,
+    groupby,
+    markers,
+    psi_scale = FALSE,
+    cpm_scale = TRUE,
+    group_colors = NULL,
+    col_palette = rev(grDevices::hcl.colors(100, "RdYlBu")),
+    gene_names_col = NULL,
+    ...) {
+  # 1. Ensure pseudobulk assays exist
+  as_pb <- pseudobulk(pbas, groupby, clean_derivatives = c("psi", "cpm"))
+  if (!("psi" %in% SummarizedExperiment::assayNames(as_pb))) {
+    SummarizedExperiment::assay(as_pb, "psi") <- calc_psi(as_pb)
+  }
+  ge_pb <- pseudobulk(pbge, groupby, clean_derivatives = c())
+  if ("counts" %in% SummarizedExperiment::assayNames(ge_pb)) {
+    SummarizedExperiment::assay(ge_pb, "cpm") <- calc_cpm(ge_pb)
+  }
+
+  # 2. Extract PSI matrix for marker segments
+  psi <- t(SummarizedExperiment::assay(as_pb, "psi")[markers$seg_id, , drop = FALSE])
+  # Flip PSI for markers with negative dpsi
+  psi[, markers$dpsi < 0] <- 1 - psi[, markers$dpsi < 0]
+
+  # If is_marker is missing, default to TRUE
+  if (is.null(markers$is_marker)) {
+    markers$is_marker <- TRUE
+  }
+
+  # 3. Determine group ordering via MDS on PSI correlations
+  cor_mat <- stats::cor(t(psi), use = "pairwise.complete.obs")
+  cor_mat[is.na(cor_mat)] <- 0
+  mds_coords <- stats::cmdscale(1 - cor_mat, k = 1)
+  groups <- rownames(psi)[order(mds_coords[, 1])]
+
+  # 4. Reorder markers by group (matching MDS order), then by group factor
+  markers <- markers[order(markers$group), ]
+  markers <- markers[order(match(markers$group, groups)), ]
+  psi <- psi[groups, markers$seg_id, drop = FALSE]
+
+  # 5. Extract CPM matrix for genes corresponding to segments
+  gids <- SummarizedExperiment::rowData(as_pb)[rownames(markers), "gene_id"]
+  cpm <- t(SummarizedExperiment::assay(ge_pb, "cpm")[gids, rownames(psi), drop = FALSE])
+  if (!is.null(gene_names_col)) {
+    gene_names <- S4Vectors::elementMetadata(SummarizedExperiment::rowRanges(ge_pb))[gids, gene_names_col]
+    colnames(cpm) <- paste0(gene_names)
+    colnames(psi) <- paste0(colnames(cpm), ":", colnames(psi))
+  }
+
+  # 6. Determine colorscales
+  psi_zlim <- c(0, 1)
+  if (psi_scale) {
+    psi <- apply(psi, 2, visutils::scaleTo)
+    psi_zlim <- NULL
+  }
+  cpm_zlim <- range(cpm, na.rm = TRUE)
+  if (cpm_scale) {
+    cpm <- scale(cpm)
+    max_abs <- max(abs(cpm), na.rm = TRUE)
+    cpm_zlim <- c(-max_abs, max_abs)
+  }
+
+  # 7. Prepare row annotations
+  row_anns <- list(
+    ct = markers$group,
+    is_marker = as.character(markers$is_marker),
+    psi_flipped = as.character(markers$dpsi < 0)
+  )
+  log2col <- c("TRUE" = "gray", "FALSE" = "white")
+  row_ann_cols <- list(
+    ct = if (is.null(group_colors)) visutils::char2col(rownames(psi)) else group_colors,
+    is_marker = log2col,
+    psi_flipped = log2col
+  )
+
+  # 8. Plot side-by-side with layout
+  graphics::layout(matrix(c(rep(1, nrow(psi)), rep(2, nrow(psi))), ncol = 2, byrow = FALSE),
+    widths = c(1, 1)
+  )
+  graphics::par(
+    bty = "n", tcl = -0.2, mgp = c(1.3, 0.3, 0), mar = c(0, 0.5, 0, 0),
+    oma = c(6, 34, 3, 1), xpd = NA
+  )
+
+  # 8a. PSI heatmap
+  xaxlab <- rownames(psi)
+  if (graphics::par("mfrow")[1] == 2) xaxlab <- NULL
+  visutils::imageWithText(
+    psi,
+    "",
+    colAnns = list(ct = rownames(psi)),
+    rowAnns = row_anns,
+    colAnnCols = list(ct = row_ann_cols$ct),
+    rowAnnCols = row_ann_cols,
+    xaxlab = xaxlab,
+    main = "Alternative Splicing",
+    col = col_palette,
+    zlim = psi_zlim,
+    ...
+  )
+  if (!psi_scale) {
+    visutils::plotColorLegend2(
+      graphics::grconvertX(1.02, "npc", "nfc"), 1,
+      graphics::grconvertY(0.1, "npc", "nfc"),
+      graphics::grconvertY(0.9, "npc", "nfc"),
+      fullzlim = psi_zlim, zlim = psi_zlim,
+      zfun = identity,
+      z2col = function(x) visutils::num2col(x, col_palette),
+      title = "PSI"
+    )
+  }
+
+  # 8b. CPM heatmap
+  visutils::imageWithText(
+    cpm,
+    "",
+    colAnns = list(ct = rownames(psi)),
+    rowAnns = row_anns,
+    colAnnCols = list(ct = row_ann_cols$ct),
+    rowAnnCols = row_ann_cols,
+    main = "Gene Expression",
+    col = col_palette,
+    zlim = cpm_zlim,
+    ...
+  )
+  visutils::plotColorLegend2(
+    graphics::grconvertX(1.02, "npc", "nfc"), 1,
+    graphics::grconvertY(0.1, "npc", "nfc"),
+    graphics::grconvertY(0.9, "npc", "nfc"),
+    fullzlim = cpm_zlim, zlim = cpm_zlim,
+    zfun = identity,
+    z2col = function(x) visutils::num2col(x, col_palette),
+    title = ifelse(cpm_scale, "z-score", "CPM")
+  )
+
+  invisible(NULL)
+}
+
+
+###### pipeline helpers ######
+
+#' Load intron counts as a SummarizedExperiment
+#'
+#' Reads a Matrix Market file (and accompanying keys) to build a `SummarizedExperiment`
+#'  where rows are intron segments and columns are cell barcodes.
+#' Uses `read_named_mm()` to load the counts matrix along with row and column names.
+#'
+#' @param path Character; file prefix for the Matrix Market data.
+#'   If `path.mtx` or `path.mtx.gz` exists, `read_named_mm(path)` is used to load the sparse matrix.
+#'
+#' @return A `SummarizedExperiment` with:
+#'   - An assay named `counts` (a sparse `dgCMatrix`) storing intron counts: rows = intron IDs, columns = barcodes.
+#'   - `rowRanges`: a `GRanges` built by parsing row names (intron IDs) of the form `chr:strand:start-end`.
+#'     It sets `seqnames = chr`, `ranges = IRanges(start, end)`, and `strand` as `"+"` or `"-"`.
+#'   - `colData`: a data.frame with one column `barcode` (the column names of the count matrix).
+#'   If no `.mtx` file is found, returns `NULL`.
+#'
+#' @seealso \code{\link{read_named_mm}}, \code{\link[Matrix]{readMM}}
+#' @export
+load_introns_as_se <- function(path) {
+  # 1. Use read_named_mm() to load the sparse matrix with row/column names
+  counts <- read_named_mm(path)
+  if (is.null(counts)) {
+    return(NULL)
+  }
+
+  # 2. Extract feature IDs and barcodes from the matrix
+  feature_ids <- rownames(counts)
+  barcodes <- colnames(counts)
+
+  # 3. Parse feature IDs of the form "chr:strand:start-end"
+  parts <- strsplit(feature_ids, ":")
+  chr <- vapply(parts, `[`, character(1), 1)
+  strand_code <- vapply(parts, `[`, character(1), 2)
+  coords <- vapply(parts, `[`, character(1), 3)
+  coord_split <- strsplit(coords, "-")
+  start <- as.integer(vapply(coord_split, `[`, character(1), 1))
+  end <- as.integer(vapply(coord_split, `[`, character(1), 2))
+  strand <- ifelse(strand_code == "1", "+",
+    ifelse(strand_code == "-1", "-", "*")
+  )
+
+  # 4. Build GRanges for rowRanges
+  row_ranges <- GenomicRanges::GRanges(
+    seqnames = chr,
+    ranges = IRanges::IRanges(start = start, end = end),
+    strand = strand,
+    feature_id = feature_ids
+  )
+
+  # 5. Construct SummarizedExperiment
+  se <- SummarizedExperiment::SummarizedExperiment(
+    assays    = list(counts = counts),
+    rowRanges = row_ranges,
+    colData   = data.frame(barcode = barcodes, row.names = barcodes)
+  )
+
+  return(se)
+}
+
+
+#' Bind a list of sparse matrices by rows, aligning columns
+#'
+#' Given a list of matrices (possibly sparse), this function ensures that each matrix hasthe same set of column names
+#'   by inserting zero‐filled sparse columns where needed, then row‐binds them into a single sparse matrix.
+#'
+#' @param mat_list A list of matrices or sparse matrices. Each should have identical row names
+#'   but may differ in column names.
+#' @param colnames_union Optional character vector of column names to enforce across all matrices.
+#'   If `NULL`, defaults to the union of all column names in `mat_list`.
+#'
+#' @return A single sparse matrix (class `dgCMatrix`) obtained by row‐binding all matrices in
+#'   `mat_list`, with columns matching `colnames_union`. Missing columns in a given matrix
+#'   are filled with zero‐filled sparse columns.
+#'
+#' @examples
+#' \dontrun{
+#' library(Matrix)
+#' mat1 <- sparseMatrix(
+#'   i = c(1, 2), j = c(1, 2), x = c(1, 2),
+#'   dims = c(2, 3), dimnames = list(c("r1", "r2"), c("A", "B", "C"))
+#' )
+#' mat2 <- sparseMatrix(
+#'   i = c(1, 2), j = c(2, 3), x = c(3, 4),
+#'   dims = c(2, 3), dimnames = list(c("r1", "r2"), c("B", "C", "D"))
+#' )
+#' combined <- rbind_matrix(list(mat1, mat2))
+#' # Result has columns A, B, C, D, with zeros filled sparsely
+#' }
+#'
+#' @export
+rbind_matrix <- function(mat_list, colnames_union = NULL) {
+  # Determine union of column names if not provided
+  if (is.null(colnames_union)) {
+    colnames_union <- unique(unlist(lapply(mat_list, colnames)))
+  }
+
+  # Adjust each matrix to have all columns, filling missing with sparse zeros
+  adjusted_list <- lapply(mat_list, function(mat) {
+    # Coerce to sparse dgCMatrix if not already
+    if (!inherits(mat, "dgCMatrix")) {
+      mat <- Matrix::Matrix(as.matrix(mat), sparse = TRUE)
+    }
+    missing_cols <- setdiff(colnames_union, colnames(mat))
+    if (length(missing_cols) > 0) {
+      zero_mat <- Matrix::Matrix(
+        0,
+        nrow = nrow(mat),
+        ncol = length(missing_cols),
+        sparse = TRUE,
+        dimnames = list(rownames(mat), missing_cols)
+      )
+      mat <- cbind(mat, zero_mat)
+    }
+    # Reorder columns to match colnames_union
+    mat[, colnames_union, drop = FALSE]
+  })
+
+  # Row-bind all adjusted sparse matrices; result remains sparse
+  do.call(rbind, adjusted_list)
+}
+
+
+#' Subset or reorder sparse matrix columns to a specified set
+#'
+#' Given a matrix or sparse matrix and a target set of column names, this function returns
+#' a new sparse matrix whose columns match exactly the target set. Existing columns are
+#' retained (and reordered if needed), and any target column not present is added as a
+#' zero‐filled sparse column.
+#'
+#' @param mat A matrix or sparse matrix with named columns.
+#' @param target_cols Character vector specifying the desired column names (and order).
+#'
+#' @return A sparse matrix (`dgCMatrix`) with columns exactly `target_cols`. Any column in
+#'   `target_cols` not originally present in `mat` will be inserted as a zero‐filled sparse column.
+#'   Row names are unchanged.
+#'
+#' @examples
+#' \dontrun{
+#' library(Matrix)
+#' m <- sparseMatrix(
+#'   i = c(1, 2, 1), j = c(1, 2, 3), x = c(1, 2, 3),
+#'   dims = c(2, 4), dimnames = list(c("r1", "r2"), c("A", "B", "D", "E"))
+#' )
+#' result <- sub_cols_matrix(m, c("A", "B", "C", "D", "E"))
+#' # 'C' inserted as sparse zero column; columns ordered A,B,C,D,E
+#' }
+#'
+#' @export
+sub_cols_matrix <- function(mat, target_cols) {
+  # Coerce to sparse if not already
+  if (!inherits(mat, "dgCMatrix")) {
+    mat <- Matrix::Matrix(as.matrix(mat), sparse = TRUE)
+  }
+  missing_cols <- setdiff(target_cols, colnames(mat))
+  if (length(missing_cols) > 0) {
+    zero_mat <- Matrix::Matrix(
+      0,
+      nrow = nrow(mat),
+      ncol = length(missing_cols),
+      sparse = TRUE,
+      dimnames = list(rownames(mat), missing_cols)
+    )
+    mat <- cbind(mat, zero_mat)
+  }
+  # Reorder columns to exactly match target_cols
+  mat[, target_cols, drop = FALSE]
+}
+
+
+#' Read a Matrix Market file with accompanying row/column keys
+#'
+#' Attempts to load a sparse matrix from `<prefix>.mtx` or `<prefix>.mtx.gz`,
+#'  and then assigns row names from `<prefix>_key1.csv` (or `.gz`) and column names from `<prefix>_key2.csv` (or `.gz`).
+#'
+#' @param prefix Character; file path prefix for the Matrix Market data.
+#'   If `prefix.mtx` or `prefix.mtx.gz` exists, reads it via `Matrix::readMM()`.
+#'   Row names are read from `prefix_key1.csv(.gz)`, column names from `prefix_key2.csv(.gz)`.
+#'
+#' @return A sparse matrix (`dgCMatrix`) with row names set to feature IDs (from key1) and
+#'   column names set to barcodes (from key2). If no `.mtx` file is found, returns `NULL`.
+#'
+#' @examples
+#' \dontrun{
+#' # Suppose files "data/counts.mtx" and "data/counts_key1.csv", "data/counts_key2.csv" exist:
+#' mat <- read_named_mm("data/counts")
+#' dim(mat)
+#' head(rownames(mat))
+#' head(colnames(mat))
+#' }
+#'
+#' @seealso \code{\link[Matrix]{readMM}}, \code{\link{load_introns_as_se}}
+#' @export
+read_named_mm <- function(prefix) {
+  # Check for .mtx file (uncompressed or gzipped)
+  mtx_path <- if (file.exists(paste0(prefix, ".mtx"))) {
+    paste0(prefix, ".mtx")
+  } else if (file.exists(paste0(prefix, ".mtx.gz"))) {
+    paste0(prefix, ".mtx.gz")
+  } else {
+    return(NULL)
+  }
+
+  # Read the sparse matrix
+  mat <- Matrix::readMM(mtx_path)
+
+  # Read row names from prefix_key1.csv or .gz
+  key1_path <- if (file.exists(paste0(prefix, "_key1.csv"))) {
+    paste0(prefix, "_key1.csv")
+  } else if (file.exists(paste0(prefix, "_key1.csv.gz"))) {
+    paste0(prefix, "_key1.csv.gz")
+  } else {
+    stop("Row key file not found: ", prefix, "_key1.csv(.gz)")
+  }
+  rownames(mat) <- readLines(key1_path)
+
+  # Read column names from prefix_key2.csv or .gz
+  key2_path <- if (file.exists(paste0(prefix, "_key2.csv"))) {
+    paste0(prefix, "_key2.csv")
+  } else if (file.exists(paste0(prefix, "_key2.csv.gz"))) {
+    paste0(prefix, "_key2.csv.gz")
+  } else {
+    stop("Column key file not found: ", prefix, "_key2.csv(.gz)")
+  }
+  colnames(mat) <- readLines(key2_path)
+
+  return(mat)
+}
+
+
+#' Load single-cell AS counts (inclusion/exclusion) as sparse matrices
+#'
+#' Given a set of segment IDs and a file prefix, this function reads inclusion (`.i.mtx`)
+#'  and exclusion (`.e.mtx`) counts via `read_named_mm()`,
+#'  then subsets to only the requested segments and ensures consistent columns between `i` and `e`.
+#'
+#' @param segs A data.frame or `SummarizedExperiment`` whose row names are the segment IDs
+#'   to load. Only those segment IDs will be returned in the output matrices.
+#' @param path Character; file prefix (without extension) for inclusion/exclusion data.
+#'   The function expects files:
+#'   - `paste0(path, ".i.mtx")` (or `.i.mtx.gz`) and accompanying keys
+#'     for inclusion counts, and
+#'   - `paste0(path, ".e.mtx")` (or `.e.mtx.gz`) and accompanying keys
+#'     for exclusion counts.
+#'   Uses `read_named_mm()`` to read each.
+#'
+#' @return A list with two sparse matrices of class `dgCMatrix`:
+#'   - `i`: inclusion counts (rows = `rownames(segs)`, columns as in the `.i` matrix),
+#'   - `e`: exclusion counts (rows = `rownames(segs)`, columns matching the inclusion matrix).
+#'
+#' @details
+#' 1. Calls `read_named_mm(paste0(path, ".e"))`` to load the exclusion count matrix.
+#' 2. Calls `read_named_mm(paste0(path, ".i"))`` to load the inclusion count matrix.
+#' 3. Subsets both matrices to only rows matching `rownames(segs)``.
+#' 4. Ensures that the inclusion matrix uses the same column ordering as the exclusion matrix.
+#' 5. Returns a list `list(e = e_sub, i = i_sub)``.
+#'
+#' @seealso \code{\link{read_named_mm}}, \code{\link{load_introns_as_se}}
+#' @export
+load_sc_as <- function(segs, path) {
+  # Read exclusion counts
+  e_mat <- read_named_mm(paste0(path, ".e"))
+  # Read inclusion counts
+  i_mat <- read_named_mm(paste0(path, ".i"))
+  # Subset to only requested segment IDs
+  seg_ids <- rownames(segs)
+  e_sub <- e_mat[seg_ids, , drop = FALSE]
+  # Align inclusion columns to exclusion
+  i_sub <- i_mat[seg_ids, colnames(e_sub), drop = FALSE]
+  return(list(e = e_sub, i = i_sub))
+}
+
+
+#' Compute delta‐PSI (difference in percent spliced‐in) per segment
+#'
+#' For a `SummarizedExperiment` of splicing segments, this function first pseudobulks the data by `groupby`,
+#'   computes PSI per segment (using `calc_psi()`), and then identifies for each segment
+#'   the group with lowest mean PSI (`low_state`),  the group with highest mean PSI (`high_state`), and their difference (`dpsi`).
+#'
+#' @param data A `SummarizedExperiment` where rows are segments and columns are single‐cell or pseudobulk samples.
+#'   Must contain assays `i` (inclusion) and `e` (exclusion) so that `calc_psi()` works after pseudobulking.
+#' @param groupby Either:
+#'   - A character vector of length `ncol(data)` giving a grouping label for each column, or
+#'   - One or more column names in `colData(data)`, whose values (pasted if multiple) define the grouping factor.
+#'   See `get_groupby_factor()` for details.
+#' @param min_cov Integer; minimum total junction coverage (`i + e`) per pseudobulk required to compute a valid PSI.
+#'                PSI values where `i + e < min_cov` are set to `NA`. Default is 50.
+#'
+#' @return A data.frame with one row per segment (rownames = `rownames(data)`), containing columns:
+#'   - `low_state`: group label with lowest mean PSI (or `NA` if fewer than two non‐NA values),
+#'   - `high_state`: group label with highest mean PSI,
+#'   - `dpsi`: numeric difference `PSI[high_state] - PSI[low_state]` (or `NA` if not computable).
+#'
+#' @details
+#' 1. The function calls `pseudobulk(data, groupby)`, which sums counts per group.
+#' 2. It then computes a PSI matrix via `calc_psi()` on the pseudobulk, obtaining one PSI value per segment × group.
+#' 3. For each segment (row of the PSI matrix):
+#'    - Extracts non‐`NA` PSI values, sorts them by ascending PSI.
+#'    - If at least two groups have non‐`NA` PSI, sets `low_state` to the name of the group with smallest PSI,
+#'      `high_state` to the group with largest PSI, and `dpsi = PSI[high_state] - PSI[low_state]`.
+#'    - Otherwise, leaves all three as `NA`.
+#'
+#' @seealso \code{\link{pseudobulk}}, \code{\link{calc_psi}}
+#' @export
+get_dpsi <- function(data, groupby, min_cov = 50) {
+  # 1. Pseudobulk by group
+  pb <- pseudobulk(data, groupby)
+
+  # 2. Compute PSI per segment × group
+  psi_mat <- calc_psi(pb, min_cov = min_cov)
+  # psi_mat is a matrix (n_segments × n_groups), possibly with NA
+
+  # 3. For each segment, find low_state, high_state, dpsi
+  result_list <- apply(psi_mat, 1, function(x) {
+    # x: numeric vector of PSI values for one segment across groups
+    non_na <- x[!is.na(x)]
+    if (length(non_na) < 2) {
+      return(data.frame(
+        low_state = NA_character_,
+        high_state = NA_character_,
+        dpsi = NA_real_
+      ))
+    }
+    # Sort by PSI
+    sorted_vals <- sort(non_na)
+    low_val <- sorted_vals[1]
+    high_val <- sorted_vals[length(sorted_vals)]
+    # Get group names corresponding to low_val and high_val
+    # 'names(non_na)' holds group labels
+    low_state <- names(non_na)[which(non_na == low_val)[1]]
+    high_state <- names(non_na)[which(non_na == high_val)[1]]
+    data.frame(
+      low_state = low_state,
+      high_state = high_state,
+      dpsi = high_val - low_val
+    )
+  })
+
+  # 4. Combine into a data.frame with rownames = segment IDs
+  result_df <- do.call(rbind, result_list)
+  rownames(result_df) <- rownames(data)
+  return(result_df)
+}
+
+
+#' Find nearest constitutive exons for a given segment
+#'
+#' Within a `SummarizedExperiment` of segments, this function identifies the nearest
+#'  upstream and downstream “constant” exons (segments) for a given segment ID (`sid`).
+#' A constant exon is defined as one where the overall PSI (summed across all samples) is `NA` or ≥ `psi_thr`.
+#' The search is restricted to segments belonging to the same gene.
+#'
+#' @param se A `SummarizedExperiment` where `rowRanges(se)` has metadata columns:
+#'   `gene_id`, `start`, `end`, `strand`, and `sites`.
+#'   The assays `i` and `e` are used to compute summed PSI.
+#' @param sid Character; the segment ID (rownames of `se`) for which to find nearest exons.
+#' @param psi_thr Numeric between 0 and 1; constant exons are those where
+#'   `sum(i) / (sum(i) + sum(e)) ≥ psi_thr` or are `NA`. Default is `0.95`.
+#'
+#' @return A named character vector of length 2, with names:
+#'   - `up`: the segment ID of the nearest upstream constant exon (or `NA` if none),
+#'   - `down`: the segment ID of the nearest downstream constant exon (or `NA` if none).
+#'
+#' @details
+#' 1. Subset `se` to only segments belonging to the same gene as `sid`.
+#' 2. Compute summed inclusion (`i_sum`) and exclusion (`e_sum`) counts across all samples:
+#'     ```r
+#'     i_sum <- rowSums(assay(se, "i")[same_gene, , drop = FALSE])
+#'     e_sum <- rowSums(assay(se, "e")[same_gene, , drop = FALSE])
+#'     psi_all <- i_sum / (i_sum + e_sum)
+#'     ```
+#'    Any segment with `psi_all ≥ psi_thr` or `is.na(psi_all)` is considered “constant.”
+#' 3. Among constant segments, define:
+#'     - “up” candidates: `sites` ∈ `c("ad", "sd")`
+#'     - “down” candidates: `sites` ∈ `c("ad", "ae")`
+#' 4. Order segments by genomic coordinate (`start`) in the gene’s transcriptional direction:
+#'     - If `strand == "-"`, use descending `start`; otherwise ascending.
+#' 5. Find the position of `sid` in that ordered list, then select the nearest constant exon
+#'    before (`up`) and after (`down`) in that order.
+#' 6. If the gene’s strand is negative (`"-"`), swap the `up` and `down` results in the final output.
+#'
+#' @seealso \code{\link{plot_segment_coverage}}, \code{\link{get_dpsi}}
+#' @export
+find_nearest_constant_exons <- function(se, sid, psi_thr = 0.95) {
+  # 1. Verify that sid exists
+  if (!(sid %in% rownames(se))) {
+    stop("Segment ID '", sid, "' not found in SummarizedExperiment.")
+  }
+
+  # Extract rowRanges as a data.frame
+  seg_df <- SummarizedExperiment::as.data.frame(SummarizedExperiment::rowRanges(se))
+  # Identify the gene of interest
+  gene_id <- seg_df[sid, "gene_id"]
+  # Subset to all segments in this gene
+  same_gene_idx <- which(seg_df$gene_id == gene_id)
+  sub_df <- seg_df[same_gene_idx, , drop = FALSE]
+
+  # 2. Compute summed inclusion/exclusion counts for these segments
+  i_sub <- SummarizedExperiment::assay(se, "i")[same_gene_idx, , drop = FALSE]
+  e_sub <- SummarizedExperiment::assay(se, "e")[same_gene_idx, , drop = FALSE]
+  i_sum <- Matrix::rowSums(i_sub)
+  e_sum <- Matrix::rowSums(e_sub)
+  psi_all <- i_sum / (i_sum + e_sum)
+
+  # 3. Identify constant segments (psi ≥ psi_thr or NA)
+  constant_flag <- is.na(psi_all) | (psi_all >= psi_thr)
+
+  # Identify up/down candidates within the gene
+  sites_vec <- sub_df$sites
+  up_cands_idx <- same_gene_idx[which(constant_flag & sites_vec %in% c("ad", "sd"))]
+  down_cands_idx <- same_gene_idx[which(constant_flag & sites_vec %in% c("ad", "ae"))]
+
+  # 4. Order segments by start coordinate respecting strand
+  strand_val <- seg_df[sid, "strand"]
+  # Get start positions for same-gene segments
+  starts <- sub_df$start
+  if (strand_val == "-") {
+    order_rel <- order(-starts)
+  } else {
+    order_rel <- order(starts)
+  }
+  ordered_idx <- same_gene_idx[order_rel]
+
+  # 5. Locate position of sid in the ordered list
+  sid_pos <- which(ordered_idx == which(rownames(se) == sid))
+
+  # Find nearest upstream constant exon: index in ordered_idx < sid_pos ∩ up_cands_idx
+  up_id <- NA_character_
+  if (length(up_cands_idx) > 0) {
+    # Determine positions of up candidates in the ordered list
+    up_positions <- which(ordered_idx %in% up_cands_idx)
+    candidates_up <- up_positions[up_positions < sid_pos]
+    if (length(candidates_up) > 0) {
+      nearest_up_pos <- max(candidates_up)
+      up_id <- rownames(se)[ordered_idx[nearest_up_pos]]
+    }
+  }
+
+  # Find nearest downstream constant exon: index in ordered_idx > sid_pos ∩ down_cands_idx
+  down_id <- NA_character_
+  if (length(down_cands_idx) > 0) {
+    down_positions <- which(ordered_idx %in% down_cands_idx)
+    candidates_down <- down_positions[down_positions > sid_pos]
+    if (length(candidates_down) > 0) {
+      nearest_down_pos <- min(candidates_down)
+      down_id <- rownames(se)[ordered_idx[nearest_down_pos]]
+    }
+  }
+
+  # 6. If gene is on negative strand, swap up/down
+  if (strand_val == "-") {
+    tmp <- up_id
+    up_id <- down_id
+    down_id <- tmp
+  }
+
+  return(c(up = up_id, down = down_id))
+}
+
+
+#' Construct a contingency table from paired x and y vectors
+#'
+#' Given two vectors `x` and `y` of equal length, and a corresponding vector `i` of values,
+#'  this function creates a matrix whose rows correspond to each unique value in `x`,
+#'  columns correspond to each unique value in `y`,
+#'  and entries are taken from `i` at matching `(x, y)` pairs.
+#'
+#' @param x A vector (atomic) of length n, representing row labels.
+#' @param y A vector of length n, representing column labels.
+#' @param i A vector of length n, where `i[j]` is the value to place at row = `x[j]`, column = `y[j]`.
+#'
+#' @return A matrix of dimension `length(unique(x)) × length(unique(y))`, with row names set to sorted unique values of `x`
+#'   and column names set to sorted unique values of `y`.
+#'   For each position `(r, c)`, the entry is the value from `i[j]` where `x[j] == r` and `y[j] == c`. If no such `j` exists, the entry is `NA`.
+#'
+#' @examples
+#' \dontrun{
+#' x <- c("A", "B", "A", "C")
+#' y <- c("X", "Y", "X", "Z")
+#' i <- c(1, 2, 3, 4)
+#' # unique(x) = A, B, C; unique(y) = X, Y, Z
+#' # (A, X) appears twice with values 1 and 3; the latter overwrites
+#' result <- cast_xy_table(x, y, i)
+#' #      X  Y  Z
+#' #  A   3 NA NA
+#' #  B  NA  2 NA
+#' #  C  NA NA  4
+#' }
+#'
+#' @export
+cast_xy_table <- function(x, y, i) {
+  # Determine sorted unique values
+  ys <- sort(unique(y))
+  xs <- sort(unique(x))
+
+  # Initialize result matrix with NA
+  m <- matrix(
+    NA,
+    nrow = length(xs),
+    ncol = length(ys),
+    dimnames = list(xs, ys)
+  )
+
+  # Convert to character for indexing
+  x_char <- as.character(x)
+  y_char <- as.character(y)
+
+  # Fill in values
+  for (j in seq_along(x_char)) {
+    m[x_char[j], y_char[j]] <- i[j]
+  }
+
+  return(m)
+}
+
+
+#' Determine genomic plotting coordinates for a segment with flanking exons
+#'
+#' Given a segment ID (`sid`), a pseudobulk `SummarizedExperiment` (`pb_all`), and a gene annotation data.frame (`gene_descr`),
+#'  this function finds the closest “constant” upstream and downstream exons (using `find_nearest_constant_exons()`)
+#'  and returns a plotting window that extends from 50 bp upstream of the upstream exon start
+#'  (or gene start if none) to 50 bp upstream of the downstream exon end (or gene end if none).
+#'
+#' @param sid Character scalar; the segment ID (rownames of `pb_all`) to center the plot on.
+#' @param pb_all A `SummarizedExperiment` of pseudobulk splicing data. Its `rowRanges(pb_all)`
+#'   must include `gene_id`, `start`, `end`, and `strand`.
+#' @param gene_descr A data.frame with gene annotations, where:
+#'   - Row names are gene IDs,
+#'   - Columns include `start` (gene start coordinate) and `end` (gene end coordinate).
+#'
+#' @return A named list with two numeric elements:
+#'   - `start`: the genomic coordinate to begin plotting,
+#'   - `stop`: the genomic coordinate to end plotting.
+#'   If no upstream exon is found, `start` is the gene start; if no downstream exon is found, `stop` is the gene end.
+#'
+#' @details
+#' 1. Uses `find_nearest_constant_exons(pb_all, sid)` to get:
+#'     - `up`: ID of the nearest upstream constant exon (or `NA`),
+#'     - `down`: ID of the nearest downstream constant exon (or `NA`).
+#' 2. Extracts `gene_id` for `sid` from `rowRanges(pb_all)`.
+#' 3. If `up` is not `NA`, sets
+#'      `start = start(rowRanges(pb_all)[up, ]) - 50`
+#'    otherwise,
+#'      `start = gene_descr[gene_id, "start"]`.
+#' 4. If `down` is not `NA`, sets
+#'      `stop = end(rowRanges(pb_all)[down, ]) - 50`
+#'    otherwise,
+#'      `stop = gene_descr[gene_id, "end"]`.
+#' 5. Returns the two values as a named list.
+#'
+#' @seealso \code{\link{find_nearest_constant_exons}}, \code{\link{plot_segment_coverage}}
+#' @export
+get_plot_coords_for_seg <- function(sid, pb_all, gene_descr) {
+  # 1. Find nearest constant exons
+  nearest <- find_nearest_constant_exons(pb_all, sid)
+  up_id <- nearest["up"]
+  down_id <- nearest["down"]
+
+  # 2. Extract gene_id from rowRanges
+  seg <- SummarizedExperiment::rowRanges(pb_all)
+  gene_id <- seg[sid, "gene_id"]
+
+  # 3. Determine start coordinate
+  if (!is.na(up_id)) {
+    # use 50 bp upstream of the upstream exon's start
+    up_start <- stats::start(seg[up_id])
+    start_coord <- up_start - 50
+  } else {
+    # fallback to gene start
+    start_coord <- gene_descr[gene_id, "start"]
+  }
+
+  # 4. Determine stop coordinate
+  if (!is.na(down_id)) {
+    # use 50 bp upstream of the downstream exon's end
+    down_end <- stats::end(seg[down_id])
+    stop_coord <- down_end - 50
+  } else {
+    # fallback to gene end
+    stop_coord <- gene_descr[gene_id, "end"]
+  }
+
+  return(list(start = start_coord, stop = stop_coord))
+}
+
+
+#' Sum coverage and junction counts across a list of coverage objects
+#'
+#' Given a list of coverage objects, each containing:
+#'   - `x`: a numeric vector of genomic positions,
+#'   - `cov`: a numeric vector (or Rle) of coverage values at those positions,
+#'   - `juncs`: a data.frame of junctions with at least three coordinate columns and a `score` column,
+#' this function merges them by:
+#'   1. Summing the coverage vectors (`cov`) across all objects (requires identical `x`).
+#'   2. Constructing a union of all junction coordinates (first three columns of each `juncs`),
+#'      initializing scores to zero, then adding each object’s `juncs$score` into the union table.
+#'
+#' @param cov_list A list of coverage objects. Each object must be a list with components:
+#'   - `x`: a numeric vector of positions (shared across all objects),
+#'   - `cov`: a numeric vector (or Rle) of coverage for those positions,
+#'   - `juncs`: a data.frame with row names identifying junction IDs, at least three coordinate columns,
+#'     and a numeric `score` column.
+#'
+#' @return A single coverage object (list) with the same structure as the inputs:
+#'   - `x`: the shared positions vector,
+#'   - `cov`: the summed coverage across all inputs,
+#'   - `juncs`: a data.frame containing the union of all junction coordinate rows
+#'     (first three columns) and a `score` column summing scores from each input.
+#'
+#' @details
+#' 1. Single‐element shortcut
+#'    If `length(cov_list) == 1`, the function simply returns `cov_list[[1]]` without modification.
+#'
+#' 2. Initialization
+#'    Let `r` be a copy of the first coverage object, i.e. the element at index 1 of `cov_list`.
+#'    Extract its `x`, `cov`, and `juncs` components for later aggregation.
+#'
+#' 3. Build the union of all junction coordinates
+#'    - For each coverage object in `cov_list`, take the first three columns of its `juncs` data.frame.
+#'    - Row‐bind them all together and then apply `unique()` to get every distinct coordinate triple.
+#'    - Store these unique triples in a new data.frame called `all_juncs` and set `all_juncs$score <- 0`.
+#'
+#' 4. Accumulate scores from the first object
+#'    - Match the row names of `r$juncs` against the row names of `all_juncs`.
+#'    - For each matching row, add `r$juncs$score` into `all_juncs$score`.
+#'
+#' 5. Loop over remaining coverage objects
+#'    For each `current` in `cov_list[2:length(cov_list)]`:
+#'    - Coverage sum
+#'      Check that `identical(r$x, current$x)`. If not, stop with an error. Otherwise, do
+#'      ```r
+#'      r$cov <- r$cov + current$cov
+#'      ```
+#'    - Junction score sum
+#'      For each junction ID (row name) in `current$juncs`, locate the matching row in `all_juncs`
+#'      (by shared row name). If found, add `current$juncs$score` to `all_juncs$score` at that row.
+#'      Junctions that do not appear in `current$juncs` simply contribute zero.
+#'
+#' 6. Finalize
+#'    After processing all objects, assign `r$juncs <- all_juncs` and return `r`.
+#'
+#' @export
+sum_covs <- function(cov_list) {
+  # If only one element, return it directly
+  if (length(cov_list) == 1) {
+    return(cov_list[[1]])
+  }
+
+  # 1. Initialize result as a deep copy of the first coverage object
+  r <- cov_list[[1]]
+
+  # 2. Build a data.frame of all unique junction coordinates (first three columns)
+  #    across all coverage objects
+  all_coords_list <- lapply(cov_list, function(cov_obj) {
+    cov_obj$juncs[, 1:3, drop = FALSE]
+  })
+  all_juncs <- unique(do.call(rbind, all_coords_list))
+  # Ensure row names of all_juncs match original junction IDs if present
+  # We'll use the original row names from r$juncs for those rows that match exactly.
+  # But to maintain compatibility, we'll set row names to the coordinate string.
+  rownames(all_juncs) <- apply(all_juncs, 1, function(row) paste(row, collapse = ":"))
+
+  # 3. Initialize scores to zero
+  all_juncs$score <- rep(0, nrow(all_juncs))
+
+  # 4. Add scores from the first object
+  #    Map r$juncs rows into all_juncs
+  #    If r$juncs row names differ from the coordinate-based rownames(all_juncs),
+  #    assume rownames(r$juncs) match the coordinate paste
+  matching_r <- intersect(rownames(all_juncs), rownames(r$juncs))
+  if (length(matching_r) > 0) {
+    all_juncs[matching_r, "score"] <-
+      all_juncs[matching_r, "score"] + r$juncs[matching_r, "score"]
+  }
+
+  # 5. Loop over remaining coverage objects
+  for (i in seq(2, length(cov_list))) {
+    current <- cov_list[[i]]
+    # Verify coverage positions match
+    if (!identical(r$x, current$x)) {
+      stop("Coverage positions do not match between objects.")
+    }
+    # Sum coverage
+    r$cov <- r$cov + current$cov
+
+    # Sum junction scores: map current$juncs rows into all_juncs
+    matching_c <- intersect(rownames(all_juncs), rownames(current$juncs))
+    if (length(matching_c) > 0) {
+      all_juncs[matching_c, "score"] <-
+        all_juncs[matching_c, "score"] + current$juncs[matching_c, "score"]
+    }
+  }
+
+  # 6. Assign updated junction table back to r$juncs
+  r$juncs <- all_juncs
+
+  return(r)
+}
+
+
+#' Plot read coverage and splice junctions for a genomic segment across groups
+#'
+#' This function visualizes read coverage, junction support, PSI (percent spliced-in), and CPM for a specified segment or genomic region across multiple groups.
+#' It can either accept a segment ID (`sid`) and a `SummarizedExperiment` of pseudobulk splicing (`data_as`) to compute PSI,
+#'  or explicit `chr`, `start`, `stop`, and precomputed `covs` to plot raw coverage.
+#' When both `data_as` and `sid` are provided, PSI boxplots are drawn;
+#'  when `data_ge` is provided, CPM boxplots or plots are drawn.
+#' Finally, transcript models from a `gtf` data.frame are rendered below.
+#'
+#' @param sid Character; segment ID (row name of `data_as`) to center on. Required if `data_as` is given.
+#' @param chr Character; chromosome name (e.g., `"chr1"`). Required if not using `sid`.
+#' @param start Numeric; genomic start coordinate of plot window. If `sid` is provided, can be `NULL`.
+#' @param stop Numeric; genomic stop coordinate of plot window. If `sid` is provided, can be `NULL`.
+#' @param covs A named list of coverage objects (each produced by `getReadCoverage()` and then `sum_covs()`),
+#'   where names are group labels. If `NULL`, coverage is loaded from BAMs specified in `samples`.
+#' @param celltypes Character vector of group labels (subset of those in `covs` and/or `data_as`) to plot.
+#'   If `NULL` and `sid` + `data_as` provided, all groups with PSI for `sid` are used.
+#' @param data_as A `SummarizedExperiment` of pseudobulk splicing data (with assays `i`, `e`, optionally `psi`).
+#'   If provided along with `sid`, PSI boxplots per group will be drawn.
+#' @param data_ge A `SummarizedExperiment` of pseudobulk gene‐expression data (with assay `cpm`).
+#'   If provided, a CPM boxplot per group is drawn for the gene of `sid`.
+#' @param groupby Character; column name in `colData(data_as)` and `colData(data_ge)` defining grouping (e.g., `"celltype"`).
+#'   Required if `data_as` or `data_ge` is provided. Cannot be a length->1 vector.
+#' @param barcodes A data.frame mapping `sample_id` and `barcode` to group labels (same `groupby` name). Required if raw coverage is loaded.
+#' @param samples A data.frame with columns `sample_id` and `bam_path` for each sample. Required if raw coverage is loaded.
+#' @param gene_descr A data.frame of gene annotations with row names = gene IDs, and columns `start`, `end`, `name`, `descr`.
+#'   Required if PSI or CPM are to be labeled or if transcript trigram is needed.
+#' @param scan_bam_flags A list passed to `scanBamFlags()` when loading from BAM.
+#'   Default: `list(isNotPassingQualityControls = FALSE, isDuplicate = FALSE, isSupplementaryAlignment = FALSE, isSecondaryAlignment = FALSE)`.
+#' @param plot_junc_only_within Logical or `NA`; if `TRUE`, only plot junctions fully within `[start, stop]`;
+#'   if `FALSE`, plot junctions with at least one end in the window; if `NA`, plot all junctions. Default `NA`.
+#' @param min_junc_cov_f Numeric; fraction threshold for plotting junctions by fraction of coverage. Default `0.01`.
+#' @param min_junc_cov Numeric; minimum junction coverage to plot. Default `3`.
+#' @param gtf A data.frame of gene/transcript annotation with columns `gene_id`, `start`, `end`, `exon.col`, `cds.col`.
+#'   Only rows for the gene of `sid` are used if `sid` is provided.
+#'   Must be suitable for `plotTranscripts()`.
+#' @param ylim_by_junc Logical; if `TRUE`, set y‐axis limits by junction coverage only. Default `FALSE`.
+#' @param ylim Numeric vector of length 2 specifying y‐axis limits for coverage plots. If `NULL`, determined automatically.
+#' @param oma Numeric vector of length 4 for `par(oma = ...)`. Default `c(6, 34, 3, 1)`.
+#'
+#' @return Invisibly returns the updated `covs` list (with any newly loaded coverage added). Plots are drawn as a multi‐panel figure:
+#'   1. Left: CPM boxplot (if `data_ge` provided).
+#'   2. Middle: PSI boxplot (if `data_as` provided).
+#'   3. Right: Per‐group coverage and junction plots, one row per group.
+#'   4. Bottom: Transcript model plot for gene of `sid`.
+#'
+#' @details
+#' 1. Argument validation
+#'    - `groupby` must be a single column name if either `data_as` or `data_ge` is provided.
+#'    - If both `start`/`stop`/`chr` are `NULL`, `sid` + `data_as` must be provided.
+#'    - If raw coverage must be loaded (i.e., `covs` is `NULL`), `samples`, `barcodes`, and `groupby` are required.
+#'
+#' 2. PSI boxplot (when `sid` + `data_as`)
+#'    - Subset `data_as` to row = `sid`.
+#'    - Compute `psi <- assay(data_as, "psi")[sid, ]` if present, else call `calc_psi(data_as)[sid, ]`.
+#'    - Split `psi` by group via `get_groupby_factor(data_as, groupby)` and draw horizontal boxplot via `boxplot(..., horizontal = TRUE)`.
+#'
+#' 3. CPM boxplot (when `data_ge` + `sid`)
+#'    - Determine `gid <- rowRanges(data_as)[sid, "gene_id"]`.
+#'    - Extract CPM for that gene: `cpms <- assay(data_ge, "cpm")[gid, ]`.
+#'    - Split by group and draw boxplot similarly.
+#'
+#' 4. Coverage and junction plots
+#'    - If `covs` is `NULL`, for each group:
+#'      - Filter `barcodes` to those with `groupby` = group label.
+#'      - Call `getReadCoverage(bam_path, chr, start, stop, strand, scanBamFlags, tagFilter = list(CB = barcodes_in_group))` for each sample,
+#'        then merge via `sum_covs()`.
+#'      - Store result in `covs[[group]]`.
+#'    - Define layout: one column for coverage/junction per group (stacked), plus two left columns for boxplots if drawn.
+#'    - For each group row:
+#'      - Subset `cov <- covs[[group]]` to `[start, stop]` via `subsetCov()`.
+#'      - Compute `junc_filter` based on `plot_junc_only_within`, `min_junc_cov`, and `min_junc_cov_f`.
+#'      - Determine `ylim_group <- if (!is.null(ylim)) ylim else if (ylim_by_junc) c(0, max(junc_scores)) else c(0, max(cov$cov))`.
+#'      - Call `plotReadCov(cov, xlim = c(start, stop), ylab = "Coverage", main = group, plot.junc.only.within = plot_junc_only_within, min.junc.cov = min_junc_cov, min.junc.cov.f = min_junc_cov_f, ylim = ylim_group, xaxt = "n")`.
+#'      - Draw `abline(h = 0)`.
+#'
+#' 5. Transcript model
+#'    - Call `plotTranscripts(gtf_subset, new = TRUE, exon.col = NA, cds.col = NA, xlim = c(start, stop))` at the bottom.
+#'
+#' 6. Return value
+#'    Invisibly returns `covs` (a named list of per‐group coverage objects) so cached coverage can be reused.
+#'
+#' @seealso \code{\link{sum_covs}}, \code{\link{subset_cov}}
+#' @export
+plot_segment_coverage <- function(
+    sid = NULL,
+    chr = NULL,
+    start = NULL,
+    stop = NULL,
+    covs = NULL,
+    celltypes = NULL,
+    data_as = NULL,
+    data_ge = NULL,
+    groupby,
+    barcodes,
+    samples,
+    gene_descr,
+    scan_bam_flags = list(
+      isNotPassingQualityControls = FALSE,
+      isDuplicate = FALSE,
+      isSupplementaryAlignment = FALSE,
+      isSecondaryAlignment = FALSE
+    ),
+    plot_junc_only_within = NA,
+    min_junc_cov_f = 0.01,
+    min_junc_cov = 3,
+    gtf,
+    ylim_by_junc = FALSE,
+    ylim = NULL,
+    oma = c(6, 34, 3, 1)) {
+  # 1. Argument validation
+  if ((!is.null(data_as) || !is.null(data_ge)) && length(groupby) != 1) {
+    stop("`groupby` must be a single column name when using `data_as` or `data_ge`.")
+  }
+  if (is.null(chr) && is.null(start) && is.null(stop) && is.null(sid)) {
+    stop("Either `sid` or (`chr`, `start`, `stop`) must be provided.")
+  }
+  if (is.null(covs) && (is.null(samples) || is.null(barcodes) || is.null(groupby))) {
+    stop("To load coverage from BAM, `samples`, `barcodes`, and `groupby` are required.")
+  }
+
+  # 2. PSI preparation if sid + data_as provided
+  psi <- NULL
+  if (!is.null(sid) && !is.null(data_as)) {
+    # Construct group factor
+    seg <- SummarizedExperiment::as.data.frame(SummarizedExperiment::rowRanges(data_as))
+    group_factor_as <- get_groupby_factor(data_as, groupby)
+    # Subset data_as to only this segment
+    se_seg <- data_as[sid, ]
+    # Compute PSI array for this segment
+    if ("psi" %in% SummarizedExperiment::assayNames(se_seg)) {
+      psi_vals <- SummarizedExperiment::assay(se_seg, "psi")
+    } else {
+      psi_vals <- calc_psi(se_seg)[1, ]
+    }
+    psi <- split(psi_vals, group_factor_as)
+    psi <- lapply(psi, stats::na.omit)
+    psi <- psi[order(sapply(psi, mean, na.rm = TRUE))]
+  }
+
+  # 3. CPM preparation if data_ge provided
+  cpm <- NULL
+  gid <- NULL
+  if (!is.null(data_ge) && !is.null(data_as) && !is.null(sid)) {
+    group_factor_ge <- get_groupby_factor(data_ge, groupby)
+    gid <- seg[sid, "gene_id"]
+    cpm_vals <- visutils::log10p1(SummarizedExperiment::assay(data_ge, "cpm")[gid, ])
+    cpm <- split(cpm_vals, group_factor_ge)[names(psi)]
+  }
+
+  # 4. Determine genomic coordinates
+  if (!is.null(sid) && !is.null(data_as)) {
+    if (is.null(start)) {
+      start <- gene_descr[gid, "start"]
+    }
+    if (is.null(stop)) {
+      stop <- gene_descr[gid, "end"]
+    }
+    if (is.null(chr)) {
+      chr <- as.character(seg[sid, "seqnames"])
+    }
+  }
+
+  # 5. Prepare GTF subset for transcript model
+  if (!is.null(sid)) {
+    gtf <- gtf[gtf$gene_id == gid, ]
+  }
+  gtf$exon.col <- "black"
+  gtf$cds.col <- "black"
+  if (!is.null(sid)) {
+    f <- gtf$start <= seg[sid, "end"] & gtf$stop >= seg[sid, "start"]
+    gtf$exon.col[f] <- "red"
+    gtf$cds.col[f] <- "red"
+  }
+
+  # 6. Auto‐detect celltypes if missing
+  if (is.null(celltypes) && !is.null(psi)) {
+    celltypes <- rev(names(psi))
+  }
+  if (is.null(celltypes)) {
+    celltypes <- unique(barcodes[, groupby])
+  }
+
+  # 7. Build layout matrix
+  #    If PSI present, allocate two left columns; if CPM, allocate one more
+  n_groups <- length(celltypes)
+  layout_matrix <- matrix(seq_len(1 + n_groups), ncol = 1)
+  if (!is.null(psi)) {
+    layout_matrix <- layout_matrix + 1
+    layout_matrix <- cbind(1, layout_matrix)
+  }
+  if (!is.null(cpm)) {
+    layout_matrix <- layout_matrix + 1
+    layout_matrix <- cbind(1, layout_matrix)
+  }
+  if (ncol(layout_matrix) > 1) {
+    layout_matrix[nrow(layout_matrix), -ncol(layout_matrix)] <- max(layout_matrix) + 1
+  }
+  graphics::layout(layout_matrix, widths = c(rep(1, ncol(layout_matrix) - 1), 3), heights = c(rep(1, nrow(layout_matrix) - 1), 4))
+  graphics::par(bty = "n", tcl = -0.2, mgp = c(1.3, 0.3, 0), mar = c(0, 0.5, 0, 0), oma = oma, xpd = NA)
+
+  # 8. Plot CPM boxplot if available
+  if (!is.null(cpm)) {
+    plot(1, t = "n", yaxs = "i", ylim = c(0.5, n_groups + 0.5), xlim = c(0, max(unlist(cpm))), yaxt = "n", xlab = "l10CPM", ylab = "")
+    graphics::boxplot(cpm, horizontal = TRUE, las = 1, add = TRUE, xpd = NA, cex.axis = 2, xaxt = "n")
+  }
+
+  # 9. Plot PSI boxplot if available
+  if (!is.null(psi)) {
+    plot(1, t = "n", yaxs = "i", ylim = c(0.5, n_groups + 0.5), xlim = c(0, 1), yaxt = "n", xlab = "PSI", ylab = "")
+    graphics::boxplot(psi, horizontal = TRUE, las = 1, add = TRUE, yaxt = if (is.null(cpm)) "s" else "n")
+  }
+
+  # 10. Coverage and junction plotting per group
+  graphics::par(mar = c(0, 6, 1.1, 0), xpd = FALSE)
+  for (ct in celltypes) {
+    cov <- covs[[ct]]
+    # Load coverage if missing or range incomplete
+    if (is.null(cov) || start < cov$start || stop > cov$end) {
+      cov <- list()
+      for (i in seq_len(nrow(samples))) {
+        sample_id <- samples$sample_id[i]
+        bam_path <- samples$bam_path[i]
+        tags <- barcodes$barcode[barcodes$sample_id == sample_id & !is.na(barcodes[, groupby]) & barcodes[, groupby] == ct]
+        if (length(tags) == 0) next
+        cov[[length(cov) + 1]] <- plotCoverage::getReadCoverage(bam_path, chr, start, stop, strand = NA, scanBamFlags = scan_bam_flags, tagFilter = list(CB = tags))
+      }
+      if (length(cov) > 0) {
+        cov <- sum_covs(cov)
+      }
+      covs[[ct]] <- cov
+    }
+    # Subset cov to [start, stop]
+    cov_sub <- subset_cov(covs[[ct]], start, stop)
+
+    # Determine junction filter
+    juncs <- cov_sub$juncs
+    junc_filter <- rep(TRUE, nrow(juncs))
+    if (!is.na(plot_junc_only_within) && plot_junc_only_within) {
+      junc_filter <- (juncs$start >= start & juncs$end <= stop)
+    } else if (!is.na(plot_junc_only_within) && !plot_junc_only_within) {
+      junc_filter <- (juncs$start >= start & juncs$start <= stop) |
+        (juncs$end >= start & juncs$end <= stop)
+    }
+
+    # Determine y‐axis limits
+    if (is.null(ylim)) {
+      raw_cov_vals <- cov_sub$cov@values
+      raw_junc_vals <- juncs$score[junc_filter]
+      if (ylim_by_junc) {
+        y_max <- max(1, raw_junc_vals, na.rm = TRUE)
+      } else {
+        y_max <- max(1, raw_cov_vals, raw_junc_vals, na.rm = TRUE)
+      }
+      ylim_group <- c(0, y_max)
+    } else {
+      ylim_group <- ylim
+    }
+
+    # Plot coverage+junction
+    plotCoverage::plotReadCov(cov_sub,
+      xlim = c(start, stop), ylab = "Coverage", xlab = chr,
+      main = ct, plot.junc.only.within = plot_junc_only_within,
+      min.junc.cov = min_junc_cov, min.junc.cov.f = min_junc_cov_f,
+      ylim = ylim_group, xaxt = "n"
+    )
+    graphics::abline(h = 0)
+  }
+
+  # 11. Transcript model plot
+  graphics::par(mar = c(3, 6, 0.2, 0))
+  plotCoverage::plotTranscripts(gtf, new = TRUE, exon.col = NA, cds.col = NA, xlim = c(start, stop))
+
+  # 12. CPM vs PSI scatter if both present
+  if (!is.null(psi) && !is.null(cpm)) {
+    lncol <- ceiling(n_groups / 30)
+    graphics::par(mar = c(3, 8 * lncol, 3, 0), xpd = NA)
+    mean_cpm <- sapply(cpm, mean)
+    mean_psi <- sapply(psi, mean, na.rm = TRUE)
+    visutils::plotVisium(
+      cbind(mean_cpm, mean_psi),
+      ylim = c(0, 1),
+      names(psi),
+      t = "xy",
+      xaxt = "s",
+      yaxt = "s",
+      pch = 16,
+      xlab = "l10CPM",
+      ylab = "PSI",
+      bty = "n",
+      cex = 2,
+      xaxs = "r",
+      yaxs = "r",
+      legend.args = list(
+        x = graphics::grconvertX(0, "ndc", "user"),
+        y = graphics::grconvertY(1, "npc", "user"),
+        ncol = lncol
+      )
+    )
+  }
+
+  # 13. Add main title across panels if sid is provided
+  if (!is.null(sid)) {
+    gene_info <- gene_descr[gid, ]
+    graphics::mtext(paste0(sid, " ", gene_info["name"], "\n", gene_info["descr"]), side = 3, outer = TRUE)
+  }
+
+  invisible(covs)
+}
+
+
+#' Subset a coverage object to a specified genomic window
+#'
+#' Given a coverage object (a list with components `x`, `cov`, `start`, `end`, and `juncs`),
+#' this function filters the coverage and junctions to only include data within `[start, stop]`.
+#'
+#' @param cov A coverage object (list) containing at least:
+#'   - `x`: numeric vector of genomic positions,
+#'   - `cov`: numeric vector or Rle of coverage values at those positions,
+#'   - `start`, `end`: numeric scalars indicating the current coverage bounds,
+#'   - `juncs`: data.frame of junctions with numeric columns `start` and `end`.
+#' @param start Numeric; new window start coordinate.
+#' @param stop Numeric; new window stop coordinate.
+#'
+#' @return The same coverage object `cov`, but with:
+#'   - `cov$cov` and `cov$x` filtered to positions `x >= start & x <= stop`,
+#'   - `cov$start` set to `start`, `cov$end` set to `stop`,
+#'   - `cov$juncs` filtered to rows where `(juncs$start <= stop & juncs$end >= start)`.
+#'
+#' @examples
+#' \dontrun{
+#' # Given cov with positions 1:1000 and junctions spanning various ranges:
+#' cov_window <- subset_cov(cov, start = 100, stop = 200)
+#' }
+#'
+#' @export
+subset_cov <- function(cov, start, stop) {
+  # Filter coverage vector and positions
+  pos_filter <- cov$x >= start & cov$x <= stop
+  cov$cov <- cov$cov[pos_filter]
+  cov$x <- cov$x[pos_filter]
+  # Update stored start/end
+  cov$start <- start
+  cov$end <- stop
+  # Filter junctions overlapping the window
+  cov$juncs <- cov$juncs[
+    cov$juncs$start <= stop & cov$juncs$end >= start, ,
+    drop = FALSE
+  ]
+  return(cov)
+}
+
+
+#' Read an RDS file if it exists, otherwise return NULL
+#'
+#' Attempts to read an RDS file from a given path. If the file does not exist,
+#' returns `NULL` without error.
+#'
+#' @param f Character; file path to the `.rds` file.
+#'
+#' @return The object returned by `readRDS(f)` if `file.exists(f) == TRUE`; otherwise `NULL`.
+#'
+#' @examples
+#' \dontrun{
+#' data_obj <- read_rds_if_exists("output/data.rds")
+#' if (is.null(data_obj)) {
+#'   message("No cached RDS found.")
+#' }
+#' }
+#'
+#' @export
+read_rds_if_exists <- function(f) {
+  if (file.exists(f)) {
+    return(readRDS(f))
+  }
+  return(NULL)
+}
+
+
+#' Print an informational message with a timestamp
+#'
+#' Prepends `"INFO [<timestamp>]: "` to the given `text` and prints to standard output.
+#'
+#' @param text Character; message text or format string.
+#' @param ... Additional values to append to `text` via `paste0()`.
+#'
+#' @return Invisibly returns `NULL`; prints `"INFO [YYYY-MM-DD HH:MM:SS]: "` followed by `text`.
+#'
+#' @examples
+#' \dontrun{
+#' log_info("Starting analysis for gene ", gene_id)
+#' }
+#'
+#' @export
+log_info <- function(text, ...) {
+  msg <- paste0(text, ...)
+  full_msg <- paste0("INFO [", Sys.time(), "]: ", msg)
+  message(full_msg)
+  invisible(NULL)
+}
+
+
+#' Plot MDS with group connections and labels
+#'
+#' Given two-dimensional coordinates for samples (e.g., output of `cmdscale()`),
+#'  this function plots each point colored by its group,
+#'  draws segments connecting all pairs of points within the same group,
+#'  and labels each group at the mean of its points.
+#'
+#' @param xy A numeric matrix or data.frame with two columns (dimensions) and rows corresponding to samples.
+#'   Row names should match `samples`.
+#' @param celltypes A character vector giving the group label for each row of `xy`.
+#'   Length must equal `nrow(xy)`.
+#' @param ct2col A named vector mapping each unique group label in `celltypes` to a plotting color.
+#' @param samples A vector (or factor) of sample identifiers (same order as rows of `xy`),
+#'   used to choose point characters. Can be numeric or character; coerced to factor internally.
+#' @param ... Additional graphical parameters passed to \code{\link[graphics]{plot}()}.
+#'
+#' @return Invisibly returns `NULL`; plots a scatter of `xy` points with colored segments and labels.
+#'
+#' @details
+#' 1. Each point `xy[i, ]` is plotted using `pch = as.numeric(factor(samples[i])) %% 25`
+#'    and color `ct2col[celltypes[i]]`.
+#' 2. For each distinct group `ct`, all pairs of points `xy[which(celltypes == ct), ]` are
+#'    connected with line segments of color `ct2col[ct]`.
+#' 3. At the mean coordinate of each group’s points, the group label `ct` is drawn.
+#'
+#' @examples
+#' \dontrun{
+#' # Suppose 'mds_coords' is a matrix of size (n_samples × 2),
+#' # 'groups' is a factor of length n_samples, and 'colors' maps groups to colors.
+#' plot_mds(mds_coords, groups, colors, samples = rownames(mds_coords))
+#' }
+#'
+#' @seealso \code{\link{cmdscale}}, \code{\link{plot}}
+#' @export
+plot_mds <- function(xy, celltypes, ct2col, samples, ...) {
+  # Validate dimensions
+  if (nrow(xy) != length(celltypes) || nrow(xy) != length(samples)) {
+    stop("Length of 'celltypes' and 'samples' must match nrow(xy).")
+  }
+
+  # Determine plotting character per sample (cycle through 1:24)
+  pch_vals <- as.numeric(factor(samples)) %% 25
+  pch_vals[pch_vals == 0] <- 25 # avoid zero, use 25 if modulo is zero
+
+  # Initial scatter plot
+  graphics::plot(xy,
+    col = ct2col[celltypes],
+    pch = pch_vals,
+    xlab = "Dim 1",
+    ylab = "Dim 2",
+    ...
+  )
+
+  # Draw segments connecting all pairs within each group
+  unique_ct <- unique(celltypes)
+  for (ct in unique_ct) {
+    idx <- which(celltypes == ct)
+    if (length(idx) > 1) {
+      combs <- utils::combn(idx, 2)
+      graphics::segments(
+        xy[combs[1, ], 1], xy[combs[1, ], 2],
+        xy[combs[2, ], 1], xy[combs[2, ], 2],
+        col = ct2col[ct]
+      )
+    }
+  }
+
+  # Label each group at its centroid
+  for (ct in unique_ct) {
+    idx <- which(celltypes == ct)
+    centroid_x <- mean(xy[idx, 1])
+    centroid_y <- mean(xy[idx, 2])
+    graphics::text(centroid_x, centroid_y, labels = ct, col = ct2col[ct], cex = 1)
+  }
+
+  invisible(NULL)
+}
+
+
+#' Compute recommended plot dimensions for a compareCluster result
+#'
+#' Given a `compareClusterResult` object from `clusterProfiler`,
+#'  this function returns a two‐element numeric vector giving height and width for plotting the results.
+#' The height scales with the number of clusters (up to 5 rows per cluster),
+#'  and the width scales with the number of clusters along the x‐axis.
+#' If `ccr` is `NULL`, returns `c(2, 2)`.
+#'
+#' @param ccr A `compareClusterResult` object (from `clusterProfiler::compareCluster()`), or `NULL`.
+#'
+#' @return A numeric vector of length 2:
+#'   - `height`: if `ccr` is `NULL`, `2`; otherwise `sum(pmin(5, size)) * 0.15 + 3`,
+#'     where `size` is the number of terms per cluster in `ccr@compareClusterResult`.
+#'   - `width`: if `ccr` is `NULL`, `2`; otherwise `length(size) * 0.6 + 7`,
+#'     where `length(size)` is the number of clusters with at least one term.
+#'
+#' @details
+#' 1. If `ccr` is `NULL`, returns `c(2, 2)`.
+#' 2. Otherwise:
+#'    - Extract `ccr@compareClusterResult$Cluster` to tabulate how many terms (rows) belong to each cluster.
+#'    - Cap each cluster’s row count at 5 via `pmin(5, size)`.
+#'    - Compute:
+#'      `height = sum(pmin(5, size)) * 0.15 + 3`,
+#'      `width  = length(size) * 0.6 + 7`, where `size` excludes clusters with zero terms.
+#'
+#' @examples
+#' \dontrun{
+#' dims1 <- get_dit_plot_size(ccr) # for a valid compareClusterResult
+#' dims2 <- get_dit_plot_size(NULL) # returns c(2, 2)
+#' }
+#'
+#' @seealso \code{\link{dotplot}}
+#' @export
+get_dit_plot_size <- function(ccr) {
+  # If NULL, return default (2, 2)
+  if (is.null(ccr)) {
+    return(c(2, 2))
+  }
+  # Extract cluster assignments for each term
+  clust_tbl <- table(ccr@compareClusterResult$Cluster)
+  # Keep clusters with at least one term
+  size <- clust_tbl[clust_tbl > 0]
+  # Compute height: sum of min(5, size) * 0.15 + 3
+  height <- sum(pmin(5, size)) * 0.15 + 3
+  # Compute width: number of clusters * 0.6 + 7
+  width <- length(size) * 0.6 + 7
+  c(height = height, width = width)
+}
+
+
+#' Compute pairwise correlation statistics between matrix columns
+#'
+#' Given two numeric matrices `x` and `y` (or a single matrix `x`),
+#'  this function computes Pearson correlation coefficients, sample sizes, and p-values for each pair of columns.
+#'
+#' @param x A numeric matrix with columns representing variables.
+#' @param y Optional numeric matrix; if omitted, `y <- x`. If provided, `ncol(y)` may differ from `ncol(x)`.
+#' @param ... Additional arguments passed to `stats::cor.test()` (e.g., `method`, `use`).
+#'
+#' @return A list with three matrices (dimensions = `ncol(x)` × `ncol(y)`):
+#'   - `e`: Pearson correlation coefficients between each pair of columns,
+#'   - `n`: sample sizes used in each correlation (number of non-NA pairs),
+#'   - `p`: p-values from `cor.test` for each pair.
+#'   Row names = `colnames(x)`, column names = `colnames(y)`.
+#'
+#' @details
+#' 1. If `y` is missing, set `y <- x`.
+#' 2. Initialize matrices `e`, `n`, and `p` with `NA` of size `ncol(x)` × `ncol(y)`.
+#' 3. For each column index `i` in `x` and `j` in `y`:
+#'    - Extract `x_i <- x[, i]` and `y_j <- y[, j]`.
+#'    - Compute `valid <- !is.na(x_i) & !is.na(y_j)`; let `n[i, j] <- sum(valid)`.
+#'    - If `n[i, j] > 2`, run
+#'      ```r
+#'      ct <- cor.test(x_i[valid], y_j[valid], ...)
+#'      ```
+#'      and set `e[i, j] <- ct$estimate`, `p[i, j] <- ct$p.value`.
+#'    - Otherwise, leave `e[i, j]` and `p[i, j]` as `NA`.
+#' 4. Return `list(e = e, n = n, p = p)`.
+#'
+#' @examples
+#' \dontrun{
+#' mat1 <- matrix(rnorm(100), ncol = 5)
+#' mat2 <- matrix(rnorm(100), ncol = 4)
+#' res <- my_cor_test(mat1, mat2)
+#' dim(res$e) # 5 × 4
+#' head(res$p)
+#' }
+#'
+#' @seealso \code{\link[stats]{cor.test}}
+#' @export
+my_cor_test <- function(x, y = NULL, ...) {
+  # If y is not provided, use x itself
+  if (is.null(y)) {
+    y <- x
+  }
+
+  # Ensure column names exist
+  xcn <- colnames(x)
+  ycn <- colnames(y)
+  if (is.null(xcn)) {
+    xcn <- paste0("X", seq_len(ncol(x)))
+    colnames(x) <- xcn
+  }
+  if (is.null(ycn)) {
+    ycn <- paste0("Y", seq_len(ncol(y)))
+    colnames(y) <- ycn
+  }
+
+  # Initialize result matrices
+  e_mat <- matrix(NA_real_,
+    nrow = ncol(x), ncol = ncol(y),
+    dimnames = list(xcn, ycn)
+  )
+  n_mat <- matrix(NA_integer_,
+    nrow = ncol(x), ncol = ncol(y),
+    dimnames = list(xcn, ycn)
+  )
+  p_mat <- matrix(NA_real_,
+    nrow = ncol(x), ncol = ncol(y),
+    dimnames = list(xcn, ycn)
+  )
+
+  # Loop over column pairs
+  for (i in seq_len(ncol(x))) {
+    for (j in seq_len(ncol(y))) {
+      x_i <- x[, i]
+      y_j <- y[, j]
+      valid <- !is.na(x_i) & !is.na(y_j)
+      n_obs <- sum(valid)
+      n_mat[i, j] <- n_obs
+      if (n_obs > 2) {
+        ct <- stats::cor.test(x_i[valid], y_j[valid], ...)
+        e_mat[i, j] <- ct$estimate
+        p_mat[i, j] <- ct$p.value
+      }
+    }
+  }
+
+  return(list(e = e_mat, n = n_mat, p = p_mat))
+}
+
+
+#' Annotate exons with splice site sequences from a FASTA
+#'
+#' For each exon entry in a GTF data.frame, this function assigns:
+#'   - `exon_number`: position of the exon in the transcript (1-based),
+#'   - `transc_exon_count`: total number of exons in the transcript,
+#'   - `asite`: sequence around the acceptor site,
+#'   - `dsite`: sequence around the donor site.
+#'
+#' @param gtf A data.frame of GTF entries with columns:
+#'   - `transcript_id` (identifier for each transcript),
+#'   - `feature` (e.g., `"exon"`),
+#'   - `chr_id` (chromosome),
+#'   - `start`, `stop` (numeric genomic coordinates),
+#'   - `strand` (`"+"`, `"-"`, or `"*"`).
+#'   Rows may include non-exon features; only rows where `feature == "exon"` will receive exon numbers.
+#' @param fa A named list of DNAString objects (FASTA) indexed by chromosome (matching `chr_id`),
+#'   suitable for extracting sequence via `get_site_seq()`.
+#'
+#' @return The input `gtf` data.frame with added columns:
+#'   - `exon_number`: integer index of the exon within its transcript (NA if not an exon),
+#'   - `transc_exon_count`: total exons in that transcript (NA if not an exon),
+#'   - `asite`: string sequence flanking the acceptor (5′) splice site (NA if not an exon),
+#'   - `dsite`: string sequence flanking the donor (3′) splice site (NA if not an exon).
+#'
+#' @details
+#' 1. Splits `gtf` by `transcript_id`.
+#' 2. For each transcript:
+#'    - Orders rows by `start` ascending (if `strand == "+"`) or descending (if `"-"`).
+#'    - For rows with `feature == "exon"`, assigns `exon_number` from 1 to `n_exons` and
+#'      sets `transc_exon_count = n_exons`.
+#' 3. Initializes `asite` and `dsite` as `NA`.
+#' 4. For exonic rows (`feature == "exon"`):
+#'    - If `strand == "+"`,
+#'      - `asite <- get_site_seq(chr_id, start, mars = c(12, 5), fa, rev = FALSE)`,
+#'      - `dsite <- get_site_seq(chr_id, stop,  mars = c(3, 5), fa, rev = FALSE)`.
+#'    - If `strand == "-"`,
+#'      - `asite <- get_site_seq(chr_id, stop,  mars = c(5, 12), fa, rev = TRUE)`,
+#'      - `dsite <- get_site_seq(chr_id, start, mars = c(5, 3),  fa, rev = TRUE)`.
+#'
+#' @seealso \code{\link{get_site_seq}}
+#' @export
+annotate_exons <- function(gtf, fa) {
+  # Preserve original row order via index
+  gtf$inx <- seq_len(nrow(gtf))
+
+  # Split GTF by transcript_id
+  split_list <- split(gtf, gtf$transcript_id)
+
+  # Process each transcript
+  split_list <- lapply(split_list, function(df) {
+    # Determine exon rows
+    exon_mask <- df$feature == "exon"
+    if (any(exon_mask)) {
+      # Order exons by start, adjusting for strand
+      if (all(df$strand[exon_mask] == "-")) {
+        exon_order <- order(df$start[exon_mask], decreasing = TRUE)
+      } else {
+        exon_order <- order(df$start[exon_mask])
+      }
+      n_exons <- sum(exon_mask)
+      # Assign exon_number and transc_exon_count
+      df$exon_number[exon_mask] <- seq_len(n_exons)[exon_order]
+      df$transc_exon_count[exon_mask] <- n_exons
+    }
+    return(df)
+  })
+
+  # Recombine and restore original order
+  gtf <- do.call(rbind, split_list)
+  gtf <- gtf[order(gtf$inx), ]
+  gtf$inx <- NULL
+
+  # Initialize asite and dsite
+  gtf$asite <- NA_character_
+  gtf$dsite <- NA_character_
+
+  # Compute splice site sequences for each exon row
+  exon_idx <- which(gtf$feature == "exon")
+  for (i in exon_idx) {
+    chr <- gtf$chr_id[i]
+    pos1 <- gtf$start[i]
+    pos2 <- gtf$stop[i]
+    strand <- gtf$strand[i]
+    if (strand == "+") {
+      # Acceptor: 12 bp upstream, 5 bp downstream of start
+      gtf$asite[i] <- get_site_seq(chr, pos1, mars = c(12, 5), fa, rev = FALSE)
+      # Donor: 3 bp upstream, 5 bp downstream of stop
+      gtf$dsite[i] <- get_site_seq(chr, pos2, mars = c(3, 5), fa, rev = FALSE)
+    } else if (strand == "-") {
+      # Acceptor (reverse): 5 bp upstream, 12 bp downstream of stop
+      gtf$asite[i] <- get_site_seq(chr, pos2, mars = c(5, 12), fa, rev = TRUE)
+      # Donor (reverse): 5 bp upstream, 3 bp downstream of start
+      gtf$dsite[i] <- get_site_seq(chr, pos1, mars = c(5, 3), fa, rev = TRUE)
+    }
+  }
+
+  return(gtf)
+}
+
+
+#' Extract sequence around a splice site from a genomic FASTA
+#'
+#' Retrieves a nucleotide sequence flanking a specified genomic position for one or more loci.
+#'
+#' @param chr Character vector of chromosome names (matching names in `fa`).
+#' @param pos Numeric vector of length equal to `chr`, specifying the genomic coordinate (1-based)  at the splice site for each locus.
+#' @param mars Integer vector of length 2, giving the number of bases to include upstream (`mars[1]`) and downstream (`mars[2]`) of the specified position.
+#' @param fa A named list of `DNAString` objects (e.g., from a BSgenome or a FASTA read into memory),
+#'   where names match chromosome names in `chr`. Used to extract raw sequence.
+#' @param rev Logical; if `TRUE`, the reverse complement of the extracted sequence is returned. Default is `FALSE`.
+#' @param as_string Logical; if `TRUE`, returns a single concatenated string per locus; if `FALSE`,
+#'   returns a list of single-character vectors. Default is `TRUE`.
+#' @param to_upper Logical; if `TRUE`, converts sequences to uppercase. Default is `TRUE`.
+#'
+#' @return If `as_string = TRUE`, a character vector of length `length(chr)`, where each element
+#'   is the concatenated sequence of length `mars[1] + mars[2] + 1` (position ± flanks).
+#'   If  `as_string = FALSE`, a list of character vectors (one per locus).
+#'
+#' @details
+#' For each index `i` in `seq_along(chr)`:
+#' 1. Extract bases from `fa[[chr[i]]]` in the range `(pos[i] - mars[1]):(pos[i] + mars[2])`.
+#' 2. If `rev = TRUE`, take the reverse complement of that subsequence.
+#' 3. If `as_string = TRUE`, paste the bases into a single string.
+#' 4. If `to_upper = TRUE`, convert to uppercase using `toupper()`.
+#'
+#' @examples
+#' \dontrun{
+#' # Suppose 'fa' is a list with FASTA sequences for chr1 and chr2:
+#' seq1 <- get_site_seq("chr1", 100000, mars = c(12, 5), fa, rev = FALSE)
+#' seq2 <- get_site_seq(c("chr1", "chr2"), c(100000, 200000), mars = c(5, 3), fa, rev = TRUE)
+#' }
+#'
+#' @export
+get_site_seq <- function(chr, pos, mars, fa, rev = FALSE, as_string = TRUE, to_upper = TRUE) {
+  # Initialize result list
+  res_list <- vector("list", length(chr))
+
+  for (i in seq_along(chr)) {
+    this_chr <- chr[i]
+    this_pos <- pos[i]
+    # Define start and end for extraction
+    start_pos <- this_pos - mars[1]
+    end_pos <- this_pos + mars[2]
+    # Extract raw sequence from FASTA; assume fa[[this_chr]] is a DNAString
+    subseq <- fa[[this_chr]][start_pos:end_pos]
+    # If reverse complement requested, do so
+    if (rev) {
+      subseq <- Biostrings::reverseComplement(subseq)
+    }
+    # If returning as a single string
+    if (as_string) {
+      seq_char <- as.character(subseq)
+      if (to_upper) {
+        seq_char <- toupper(seq_char)
+      }
+      res_list[[i]] <- seq_char
+    } else {
+      seq_vec <- strsplit(as.character(subseq), "")[[1]]
+      if (to_upper) {
+        seq_vec <- toupper(seq_vec)
+      }
+      res_list[[i]] <- seq_vec
+    }
+  }
+
+  # If as_string, collapse to character vector
+  if (as_string) {
+    return(unlist(res_list, use.names = FALSE))
+  } else {
+    return(res_list)
+  }
+}
+
+#' Plot sequence logo from aligned sequences
+#'
+#' Generates a sequence logo from a set of aligned nucleotide sequences, using information content.
+#'
+#' @param seq A character vector of aligned sequences. Missing values (`NA`) are removed.
+#' @param stack_height Function to compute stack height; default is `DiffLogo::informationContent`.
+#' @param ... Additional arguments passed to `DiffLogo::seqLogo()`.
+#'
+#' @return Invisibly returns `NULL`; draws the sequence logo in the active graphics device.
+#'
+#' @details
+#' 1. Removes any `NA` values from `seq`.
+#' 2. Converts remaining sequences to uppercase.
+#' 3. Computes a position weight matrix (PWM) via `DiffLogo::getPwmFromAlignment()`.
+#' 4. Plots the sequence logo using `DiffLogo::seqLogo()` with the specified `stack_height`.
+#'
+#' @examples
+#' \dontrun{
+#' aligned_seqs <- c("ATGCA", "ATGGA", "ATGTA", NA, "ATGCA")
+#' plot_logo(aligned_seqs)
+#' }
+#'
+#' @seealso \code{\link[DiffLogo]{seqLogo}}, \code{\link[DiffLogo]{getPwmFromAlignment}}
+#' @export
+plot_logo <- function(seq, stack_height = DiffLogo::informationContent, ...) {
+  # Remove NA sequences, convert to uppercase
+  clean_seq <- toupper(seq[!is.na(seq)])
+  # Compute PWM from alignment and plot logo
+  pwm <- DiffLogo::getPwmFromAlignment(clean_seq)
+  DiffLogo::seqLogo(pwm, stack_height = stack_height, ...)
+}
+
+
+#' Compute reverse complement of DNA sequences
+#'
+#' Given a character vector of nucleotide sequences, this function returns the reverse
+#' complement of each sequence, preserving ambiguous bases.
+#'
+#' @param x A character vector of DNA sequences (e.g., "ATGC").
+#'
+#' @return A character vector of the same length as `x`,
+#'   where each element is the reverse complement of the corresponding input sequence.
+#'
+#' @details
+#' 1. Splits each sequence into individual characters.
+#' 2. Uses `Biostrings::reverseComplement()` on a `BStringSet` constructed from `x`.
+#' 3. Converts the result back to a plain character string.
+#'
+#' @examples
+#' \dontrun{
+#' seqs <- c("ATGC", "NNAGT", "ccgg")
+#' rcomp(seqs)
+#' # Returns c("GCAT", "ACTNN", "CCGG")
+#' }
+#'
+#' @seealso \code{\link[Biostrings]{reverseComplement}}, \code{\link{shuffle}}
+#' @export
+rcomp <- function(x) {
+  # Convert to uppercase for consistency
+  upper_x <- toupper(x)
+  # Build a BStringSet and compute reverse complement
+  rc_set <- Biostrings::reverseComplement(Biostrings::BStringSet(upper_x))
+  # Convert back to character vector
+  as.character(rc_set)
+}
+
+
+#' Shuffle DNA sequences by k‐mer permutation
+#'
+#' Given a character vector of DNA sequences, this function generates shuffled versions
+#'  of each sequence that preserve k‐mer composition, using a user‐specified k value.
+#'
+#' @param seqs A character vector of DNA sequences (each element may include ambiguous bases).
+#' @param k Integer; length of k‐mers to preserve in the shuffle. Default is 1 (mononucleotide shuffle).
+#' @param ... Additional arguments passed to `universalmotif::shuffle_sequences()`, such as `seed`.
+#'
+#' @return A character vector of the same length as `seqs`, where each element is a shuffled
+#'    sequence preserving k‐mer composition.
+#'   If `seqs[i]` contains ambiguous bases, they are shuffled along with the sequence.
+#'
+#' @details
+#' 1. Converts each input sequence to uppercase.
+#' 2. Uses `Biostrings::BStringSet()` to construct a set of DNA strings.
+#' 3. Calls `universalmotif::shuffle_sequences()` on the `BStringSet`, specifying `k`.
+#' 4. Converts the shuffled `BStringSet` back to a character vector.
+#'
+#' @examples
+#' \dontrun{
+#' original_seqs <- c("ATGCCGTA", "NNAGTCA", "ccggttaa")
+#' shuffled <- shuffle(original_seqs, k = 2, seed = 42)
+#' print(shuffled)
+#' }
+#'
+#' @seealso \code{\link[Biostrings]{BStringSet}}, \code{\link[universalmotif]{shuffle_sequences}}
+#' @export
+shuffle <- function(seqs, k = 1, ...) {
+  # Convert to uppercase for consistency
+  upper_seqs <- toupper(seqs)
+  # Build a BStringSet for shuffling
+  bstrings <- Biostrings::BStringSet(upper_seqs)
+  # Perform k‐mer‐preserving shuffle
+  shuffled_set <- universalmotif::shuffle_sequences(bstrings, k = k, ...)
+  # Convert back to character vector
+  as.character(shuffled_set)
+}
+
+
+#' Find reverse‐complement palindrome regions in a sequence
+#'
+#' Identifies regions in a DNA sequence where a k‐mer and its reverse complement appear,
+#' potentially extending into longer palindromic regions. Optionally shuffles the sequence
+#' before searching.
+#'
+#' @param seq A character string representing a DNA sequence (may include ambiguous bases).
+#' @param n Integer; initial k‐mer length to search for reverse complements. Default is 1.
+#' @param shuffle_times Integer; number of times to apply `shuffle()` to `seq` before searching.
+#'   If `shuffle_times = 0` (default), no shuffling is performed.
+#' @param start Integer; 1‐based offset to add to reported coordinates (useful if `seq` is a subsequence).
+#'   Default is 0.
+#'
+#' @return A data.frame of palindrome regions with columns:
+#'   - `fpos`: forward start position of the region (1‐based, plus `start` offset),
+#'   - `rpos`: reverse start position of the region (1‐based, plus `start` offset),
+#'   - `len`: length of the palindrome region.
+#'   Row names are constructed as `"fpos-rpos:len"`.
+#'   If no palindromic regions are found, returns `NULL`.
+#'
+#' @details
+#' 1. If `shuffle_times > 0`, replaces `seq` with its shuffled version via `shuffle(seq, k = shuffle_times)`.
+#' 2. Builds a data.frame `nmers` with two columns:
+#'    - `forward`: all `(length(seq) - n + 1)` k‐mers of length `n` starting at each position,
+#'    - `reverse`: the reverse complement of each `forward` k‐mer.
+#'    - `pos`: start positions `1:(length(seq) - n + 1)`.
+#' 3. Identifies all matching pairs `(fpos, rpos)` where `forward[fpos] == reverse[rpos]`.
+#' 4. Iteratively extends matches to longer palindromes (extending both ends) wherever possible.
+#' 5. Constructs `rc_nmers_clean`, a data.frame of unique palindrome regions with:
+#'    - `fpos`, `rpos` adjusted by `start`,
+#'    - `len` = final palindrome length.
+#'
+#' @examples
+#' \dontrun{
+#' seq <- "AGCTTTCGA"
+#' find_rcomp_regions(seq, n = 3)
+#' # Might find the 3‐mer "AGC" at pos 1 and its reverse complement "GCT" at pos 7, etc.
+#' }
+#'
+#' @seealso \code{\link{shuffle}}
+#' @export
+find_rcomp_regions <- function(seq, n = 1, shuffle_times = 0, start = 0) {
+  # Optionally shuffle sequence
+  if (shuffle_times > 0) {
+    seq <- shuffle(seq, k = shuffle_times)
+  }
+  # Build all n‐mers and their reverse complements
+  seq_length <- nchar(seq)
+  max_pos <- seq_length - n + 1
+  if (max_pos < 1) {
+    return(NULL)
+  }
+  nmers <- data.frame(
+    forward = substring(seq, 1:max_pos, n:max_pos + (n - 1)),
+    pos = 1:max_pos,
+    stringsAsFactors = FALSE
+  )
+  nmers$reverse <- rcomp(nmers$forward)
+
+  # Find all initial matching pairs
+  rc_matches <- NULL
+  for (i in seq_len(nrow(nmers))) {
+    matches <- which(nmers$reverse == nmers$forward[i])
+    if (length(matches) > 0) {
+      rc_matches <- rbind(rc_matches, data.frame(fpos = i, rpos = matches))
+    }
+  }
+  if (is.null(rc_matches)) {
+    return(NULL)
+  }
+
+  # Iteratively extend matches to longer palindromes
+  rc_matches_clean <- NULL
+  while (nrow(rc_matches) > 0) {
+    seed <- rc_matches[1, , drop = FALSE]
+    rc_matches <- rc_matches[-1, , drop = FALSE]
+    fpos <- seed$fpos
+    rpos <- seed$rpos
+    length_k <- n
+    repeat {
+      next_f <- fpos + length_k
+      next_r <- rpos - length_k
+      if (next_f > max_pos || next_r < 1) {
+        break
+      }
+      if (nmers$forward[next_f] == nmers$reverse[next_r]) {
+        # Remove extended pair from rc_matches if present
+        remove_idx <- which(rc_matches$fpos == next_f & rc_matches$rpos == next_r)
+        if (length(remove_idx) > 0) {
+          rc_matches <- rc_matches[-remove_idx, , drop = FALSE]
+        }
+        length_k <- length_k + 1
+      } else {
+        break
+      }
+    }
+    rc_matches_clean <- rbind(
+      rc_matches_clean,
+      data.frame(
+        fpos = fpos,
+        rpos = rpos - length_k + n,
+        len  = n + (length_k - n) * 2
+      )
+    )
+  }
+
+  # Filter to fpos <= rpos to avoid duplicates
+  rc_matches_clean <- rc_matches_clean[rc_matches_clean$fpos <= rc_matches_clean$rpos, ]
+  if (nrow(rc_matches_clean) == 0) {
+    return(NULL)
+  }
+  # Adjust positions by offset and set row names
+  rc_matches_clean$fpos <- rc_matches_clean$fpos + start
+  rc_matches_clean$rpos <- rc_matches_clean$rpos + start
+  rownames(rc_matches_clean) <- paste0(
+    rc_matches_clean$fpos, "-", rc_matches_clean$rpos, ":", rc_matches_clean$len
+  )
+
+  return(rc_matches_clean)
+}
+
+
+#' Compute k-mer frequencies from a set of sequences
+#'
+#' Counts occurrences of all k-mers of length `k` across a vector of DNA sequences.
+#'
+#' @param seqs A character vector of nucleotide sequences (may include `NA`), all in uppercase.
+#' @param k Integer; length of k-mers to tally. Default is 1.
+#'
+#' @return A named numeric vector of k-mer counts, where names are k-mer strings and values
+#'   are their frequencies across all input sequences.
+#'
+#' @details
+#' 1. Removes `NA` entries from `seqs`.
+#' 2. For each sequence, extracts all substrings of length `k` starting at positions
+#'    `1:(nchar(seq) - k + 1)`.
+#' 3. Aggregates counts of each k-mer across all sequences and returns a named vector.
+#'
+#' @examples
+#' \dontrun{
+#' seqs <- c("ATGCA", "TGCAT", NA, "ATGCA")
+#' kmer_counts <- kmer_f(seqs, k = 3)
+#' # Might return counts for "ATG", "TGC", "GCA", "CAT", etc.
+#' }
+#'
+#' @export
+kmer_f <- function(seqs, k = 1) {
+  seqs <- seqs[!is.na(seqs)]
+  if (length(seqs) == 0) {
+    return(stats::setNames(numeric(0), character(0)))
+  }
+  kmers <- character(0)
+  for (s in seqs) {
+    seq_length <- nchar(s)
+    if (seq_length >= k) {
+      starts <- seq(1, seq_length - k + 1, by = 1)
+      kmers <- c(kmers, substring(s, starts, starts + k - 1))
+    }
+  }
+  tbl <- table(kmers)
+  stats::setNames(as.numeric(tbl), names(tbl))
+}
+
+
+#' Find matches or reverse-complement matches of a pattern in a sequence
+#'
+#' Searches for a given pattern in a DNA sequence, optionally also searching for its
+#' reverse complement. Returns a data.frame of match positions and strand information.
+#'
+#' @param seq A single character string representing a DNA sequence.
+#' @param pattern A character string or regular expression to match.
+#' @param ignore_case Logical; if `TRUE`, matching is case-insensitive. Default is `TRUE`.
+#' @param do_reverse Logical; if `TRUE`, also search for reverse complement of `pattern`. Default is `TRUE`.
+#' @param ... Additional arguments passed to `gregexpr()`, such as `fixed = TRUE`.
+#'
+#' @return A data.frame with columns:
+#'   - `from`: start position of each match (1-based),
+#'   - `to`: end position of each match,
+#'   - `dir`: `"f"` for forward matches, `"r"` for reverse complement matches.
+#'   If no matches are found, returns `NULL`.
+#'
+#' @details
+#' 1. Uses `gregexpr(pattern, seq, ignore_case = ignore_case, ...)` to find all forward matches.
+#'    If `gregexpr` returns `-1`, no forward matches exist.
+#' 2. If `do_reverse = TRUE`, computes the reverse complement of `pattern` via `rcomp(pattern)` and searches again for reverse matches.
+#' 3. Combines forward and reverse matches into a single data.frame, sets column names, and returns.
+#'
+#' @examples
+#' \dontrun{
+#' seq <- "ATGCGTATGC"
+#' hits <- find_matches(seq, "ATG")
+#' print(hits)
+#' # Might return positions where "ATG" (forward) or "CAT" (reverse complement) occur
+#' }
+#'
+#' @seealso \code{\link{rcomp}}
+#' @export
+find_matches <- function(seq, pattern, ignore_case = TRUE, do_reverse = TRUE, ...) {
+  # Forward matches
+  fwd <- gregexpr(pattern, seq, ignore.case = ignore_case, ...)[[1]]
+  if (fwd[1] == -1) {
+    forward_df <- NULL
+  } else {
+    forward_df <- data.frame(
+      from = fwd,
+      to = fwd + attr(fwd, "match.length") - 1,
+      dir = "f",
+      stringsAsFactors = FALSE
+    )
+  }
+
+  # Reverse complement matches
+  if (do_reverse) {
+    rc_pattern <- rcomp(pattern)
+    rev_hits <- gregexpr(rc_pattern, seq, ignore.case = ignore_case, ...)[[1]]
+    if (rev_hits[1] == -1) {
+      reverse_df <- NULL
+    } else {
+      reverse_df <- data.frame(
+        from = rev_hits,
+        to = rev_hits + attr(rev_hits, "match.length") - 1,
+        dir = "r",
+        stringsAsFactors = FALSE
+      )
+    }
+    combined <- rbind(forward_df, reverse_df)
+    if (is.null(combined)) {
+      return(NULL)
+    }
+    return(combined)
+  }
+
+  return(forward_df)
 }

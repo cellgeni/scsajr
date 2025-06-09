@@ -10,7 +10,7 @@ calc_psi(se, min_cov = 10)
 \item{se}{A \code{SummarizedExperiment} with assays named \code{i} (inclusion counts) and \code{e} (exclusion counts).
 Rows are segments; columns are pseudobulk samples.}
 
-\item{min_cov}{Integer scalar; minimum total junction coverage (\code{i + e}) required to compute a valid PSI.
+\item{min_cov}{Integer; minimum total junction coverage (\code{i + e}) required to compute a valid PSI.
 For any \code{i + e < min_cov}, the PSI is set to \code{NA}. Default is \code{10}.}
 }
 \value{

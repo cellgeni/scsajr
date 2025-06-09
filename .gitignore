@@ -2,5 +2,7 @@
 .Rhistory
 .Rprofile
 .Rproj.user
+.vscode
 example
+test
 **/setup.R

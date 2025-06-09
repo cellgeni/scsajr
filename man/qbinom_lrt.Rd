@@ -17,7 +17,7 @@ Otherwise, estimate dispersion from \code{fit_obj}’s residuals.}
 
 \item{term_labels}{Character vector of term names (excluding the intercept) in the original formula, in the same order returned by \code{attr(terms(formula), "term.labels")}.}
 
-\item{seg_id}{Character scalar; segment identifier (row name) used in warning messages.}
+\item{seg_id}{Character; segment identifier (row name) used in warning messages.}
 }
 \value{
 A numeric vector of length \code{length(term_labels) + 1}.

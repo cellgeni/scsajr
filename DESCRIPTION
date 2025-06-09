@@ -12,11 +12,17 @@ Depends:
     R (>= 3.5)
 LazyData: true
 Imports:
+    Biostrings,
+    DiffLogo,
     GenomicRanges,
     IRanges,
+    Matrix,
     S4Vectors,
     SummarizedExperiment,
+    graphics,
+    plotCoverage,
     plyr,
+    universalmotif,
     visutils
 Suggests:
     DOSE
