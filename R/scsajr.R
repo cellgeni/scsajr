@@ -2229,13 +2229,13 @@ get_plot_coords_for_seg <- function(sid, pb_all, gene_descr) {
   down_id <- nearest["down"]
 
   # 2. Extract gene_id from rowRanges
-  seg_ranges <- SummarizedExperiment::rowRanges(pb_all)
-  gene_id <- seg_ranges[sid, "gene_id"]
+  seg <- SummarizedExperiment::rowRanges(pb_all)
+  gene_id <- seg[sid, "gene_id"]
 
   # 3. Determine start coordinate
   if (!is.na(up_id)) {
     # use 50 bp upstream of the upstream exon's start
-    up_start <- stats::start(seg_ranges[up_id])
+    up_start <- stats::start(seg[up_id])
     start_coord <- up_start - 50
   } else {
     # fallback to gene start
@@ -2245,7 +2245,7 @@ get_plot_coords_for_seg <- function(sid, pb_all, gene_descr) {
   # 4. Determine stop coordinate
   if (!is.na(down_id)) {
     # use 50 bp upstream of the downstream exon's end
-    down_end <- stats::end(seg_ranges[down_id])
+    down_end <- stats::end(seg[down_id])
     stop_coord <- down_end - 50
   } else {
     # fallback to gene end
@@ -2495,14 +2495,15 @@ plot_segment_coverage <- function(
   psi <- NULL
   if (!is.null(sid) && !is.null(data_as)) {
     # Construct group factor
-    group_factor_as <- get_groupby_factor(data_as, groupby)
+    seg <- as.data.frame(SummarizedExperiment::rowRanges(data_as))
+    group_factor_as <- get_groupby_factor(seg, groupby)
     # Subset data_as to only this segment
     se_seg <- data_as[sid, ]
     # Compute PSI array for this segment
     if ("psi" %in% SummarizedExperiment::assayNames(se_seg)) {
       psi_vals <- SummarizedExperiment::assay(se_seg, "psi")
     } else {
-      psi_vals <- calc_psi(se_seg)
+      psi_vals <- calc_psi(se_seg)[1, ]
     }
     psi <- split(psi_vals, group_factor_as)
     psi <- lapply(psi, stats::na.omit)
@@ -2514,34 +2515,32 @@ plot_segment_coverage <- function(
   gid <- NULL
   if (!is.null(data_ge) && !is.null(data_as) && !is.null(sid)) {
     group_factor_ge <- get_groupby_factor(data_ge, groupby)
-    gid <- SummarizedExperiment::rowRanges(data_as)[sid, "gene_id"]
-    cpm_vals <- visutils::log10p1(SummarizedExperiment::assay(data_ge, "cpm")[gid, , drop = FALSE])
+    gid <- seg[sid, "gene_id"]
+    cpm_vals <- visutils::log10p1(SummarizedExperiment::assay(data_ge, "cpm")[gid, ])
     cpm <- split(cpm_vals, group_factor_ge)[names(psi)]
   }
 
   # 4. Determine genomic coordinates
   if (!is.null(sid) && !is.null(data_as)) {
-    seg_ranges <- as.data.frame(SummarizedExperiment::rowRanges(data_as))
-    gene_id <- seg_ranges[sid, "gene_id"]
     if (is.null(start)) {
-      start <- gene_descr[gene_id, "start"]
+      start <- gene_descr[gid, "start"]
     }
     if (is.null(stop)) {
-      stop <- gene_descr[gene_id, "end"]
+      stop <- gene_descr[gid, "end"]
     }
     if (is.null(chr)) {
-      chr <- as.character(seg_ranges[sid, "seqnames"])
+      chr <- as.character(seg[sid, "seqnames"])
     }
   }
 
   # 5. Prepare GTF subset for transcript model
   if (!is.null(sid)) {
-    gtf <- gtf[gtf$gene_id == SummarizedExperiment::rowRanges(data_as)[sid, "gene_id"], ]
+    gtf <- gtf[gtf$gene_id == gid, ]
   }
   gtf$exon.col <- "black"
   gtf$cds.col <- "black"
   if (!is.null(sid)) {
-    f <- gtf$start <= seg_ranges[sid, "end"] & gtf$stop >= seg_ranges[sid, "start"]
+    f <- gtf$start <= seg[sid, "end"] & gtf$stop >= seg[sid, "start"]
     gtf$exon.col[f] <- "red"
     gtf$cds.col[f] <- "red"
   }
@@ -2596,7 +2595,7 @@ plot_segment_coverage <- function(
         bam_path <- samples$bam_path[i]
         tags <- barcodes$barcode[barcodes$sample_id == sample_id & !is.na(barcodes[, groupby]) & barcodes[, groupby] == ct]
         if (length(tags) == 0) next
-        cov[[length(cov) + 1]] <- plotCoverage::getReadCoverage(bam_path, chr, start, stop, strand = NA, scan_bam_flags = scan_bam_flags, tagFilter = list(CB = tags))
+        cov[[length(cov) + 1]] <- plotCoverage::getReadCoverage(bam_path, chr, start, stop, strand = NA, scanBamFlags = scan_bam_flags, tagFilter = list(CB = tags))
       }
       if (length(cov) > 0) {
         cov <- sum_covs(cov)
@@ -2664,7 +2663,7 @@ plot_segment_coverage <- function(
 
   # 13. Add main title across panels if sid is provided
   if (!is.null(sid)) {
-    gene_info <- gene_descr[SummarizedExperiment::rowRanges(data_as)[sid, "gene_id"], ]
+    gene_info <- gene_descr[gid, ]
     graphics::mtext(paste0(sid, " ", gene_info["name"], "\n", gene_info["descr"]), side = 3, outer = TRUE)
   }
 
