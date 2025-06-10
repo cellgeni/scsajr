@@ -7,27 +7,27 @@
 pseudobulk(se, groupby, clean_derivatives = c("psi", "cpm"))
 }
 \arguments{
-\item{se}{A \code{SummarizedExperiment} where rows are features (e.g., segments) and columns are individual cells or barcodes.
+\item{se}{\code{SummarizedExperiment}: rows are features (e.g., segments) and columns are individual cells or barcodes.
 Assays include \code{i}, \code{e}, \code{counts}, etc.}
 
 \item{groupby}{Either:
 \itemize{
-\item A character vector of length \code{ncol(se)} giving the group label for each column, or
-\item One or more column names in \code{colData(se)}, whose values (pasted together if multiple)
-define the grouping factor via \code{get_groupby_factor()}.
-}
-After grouping, columns with the same label will be summed together.}
+\item Vector of length \code{nrow(x)} or \code{ncol(x)} (for \code{SummarizedExperiment}): treated as the grouping factor directly.
+\item Character scalar or vector of column names in \code{x} (or in \code{colData(x)} if \code{x} is a \code{SummarizedExperiment}):
+those columns are concatenated row-wise (using \code{paste()} or \code{interaction()}) to form a grouping factor.
+See \code{\link{get_groupby_factor}} for details.
+}}
 
 \item{clean_derivatives}{Character vector of assay names to remove before summation
 (e.g., \code{c("psi", "cpm")}). Default \code{c("psi", "cpm")}.}
 }
 \value{
-A new \code{SummarizedExperiment} with:
-\describe{
-\item{Assays}{Each assay from \code{se}, except those in \code{clean_derivatives}, replaced by a matrix of summed values per group.}
-\item{rowRanges}{Copied from \code{rowRanges(se)}.}
-\item{colData}{A data.frame of group-level metadata: one row per group, including any columns from \code{colData(se)}
-that are constant within each group, plus aggregated columns via \code{pseudobulk_metadata()}.}
+\code{SummarizedExperiment}:
+\itemize{
+\item \code{Assays}: Each assay from \code{se}, except those in \code{clean_derivatives}, replaced by a matrix of summed values per group
+\item \code{rowRanges}: Copied from \code{rowRanges(se)}
+\item \code{colData}: A data.frame of group-level metadata: one row per group, including any columns from \code{colData(se)}
+that are constant within each group, plus aggregated columns via \code{pseudobulk_metadata()}
 }
 }
 \description{
@@ -37,9 +37,9 @@ and returns a new \code{SummarizedExperiment} where each column corresponds to a
 }
 \details{
 \enumerate{
-\item Converts \code{groupby} into a grouping vector via \code{get_groupby_factor(se, groupby)}.
+\item Converts \code{groupby} into a grouping vector via \code{\link{get_groupby_factor}}.
 \item Drops any assays listed in \code{clean_derivatives} from \code{se}.
-\item For each remaining assay, uses \code{visutils::calcColSums()} to sum counts for columns that share the same
+\item For each remaining assay, uses \code{\link[visutils]{calcColSums}} to sum counts for columns that share the same
 group label.
 \item Builds a metadata data.frame by calling \code{pseudobulk_metadata(colData(se), groupby)}, which:
 \enumerate{

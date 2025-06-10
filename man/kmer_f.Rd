@@ -7,7 +7,7 @@
 kmer_f(seqs, k = 1)
 }
 \arguments{
-\item{seqs}{A character vector of nucleotide sequences (may include \code{NA}), all in uppercase.}
+\item{seqs}{Character vector of nucleotide sequences (may include \code{NA}), all in uppercase.}
 
 \item{k}{Integer; length of k-mers to tally. Default is 1.}
 }

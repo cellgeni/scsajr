@@ -7,8 +7,8 @@
 rbind_matrix(mat_list, colnames_union = NULL)
 }
 \arguments{
-\item{mat_list}{A list of matrices or sparse matrices. Each should have identical row names
-but may differ in column names.}
+\item{mat_list}{A list of matrices or sparse matrices.
+Each should have identical row names but may differ in column names.}
 
 \item{colnames_union}{Optional character vector of column names to enforce across all matrices.
 If \code{NULL}, defaults to the union of all column names in \code{mat_list}.}

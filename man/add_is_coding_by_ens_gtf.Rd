@@ -12,19 +12,16 @@ add_is_coding_by_ens_gtf(gtf_path, as_list)
 Must be readable by \code{read.table(..., comment.char = "#")}.}
 
 \item{as_list}{SAJR::loadSAData() output list containing segment coordinates.
-List containing at least these components:
-\describe{
-\item{\code{seg}}{A data.frame with columns \code{chr_id}, \code{start}, \code{stop}, \code{strand}, and \code{gene_id} for each segment. Row names are segment IDs.}
-}}
+List contains at least \code{seg}: (A data.frame with columns \code{chr_id}, \code{start}, \code{stop}, \code{strand}, and \code{gene_id} for each segment. Row names are segment IDs)}
 }
 \value{
 The input \code{as_list} with additional columns:
-\describe{
-\item{\code{seg$cod}}{Character vector of length ∣segments∣.
-Each element is \code{'c'} if the segment is completely within a CDS, \code{'p'} if partially overlaps, or \code{'n'} if no overlap.}
-\item{\code{seg$cod.gene}}{Logical vector of length ∣segments∣. \code{TRUE} if the segment’s gene contains at least one segment with \code{cod != 'n'}.}
-}
+\itemize{
+\item \code{seg$cod}: Character vector of length ∣segments∣.
+Each element is \code{'c'} if the segment is completely within a CDS, \code{'p'} if partially overlaps, or \code{'n'} if no overlap
+\item \code{seg$cod.gene}: Logical vector of length ∣segments∣. \code{TRUE} if the segment’s gene contains at least one segment with \code{cod != 'n'}
 The modified \code{as_list} is returned invisibly.
+}
 }
 \description{
 Given a path to an Ensembl GTF (gene annotation) and an AS result list containing segment coordinates,
@@ -55,11 +52,9 @@ Keep columns: \code{chr_id}, \code{start}, \code{stop}, \code{strand}.
 }
 \note{
 \itemize{
-\item Requires \code{GenomicRanges} for \code{GRanges}, \code{reduce()}, and \code{findOverlaps()}.
-\item Uses \code{IRanges::IRanges()} internally for range construction.
 \item If chromosome naming mismatches occur ("chr1" vs. "1"), this function attempts to harmonize by adding "chr" prefix where needed.
 }
 }
 \seealso{
-\verb{\link[GenomicRanges]\{GRanges\}}, \verb{\link[GenomicRanges]\{findOverlaps\}}, \verb{\link[GenomicRanges]\{reduce\}}
+\code{\link[GenomicRanges]{GRanges}}, \code{\link[GenomicRanges]{findOverlaps}}, \code{\link[GenomicRanges]{reduce}}
 }

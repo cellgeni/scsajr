@@ -2,12 +2,12 @@
 % Please edit documentation in R/scsajr.R
 \name{load_introns_as_se}
 \alias{load_introns_as_se}
-\title{Load intron counts as a SummarizedExperiment}
+\title{Load single-cell intron counts as a SummarizedExperiment}
 \usage{
 load_introns_as_se(path)
 }
 \arguments{
-\item{path}{Character; file prefix for the Matrix Market data.
+\item{path}{Character: file prefix for the Matrix Market data.
 If \code{path.mtx} or \code{path.mtx.gz} exists, \code{read_named_mm(path)} is used to load the sparse matrix.}
 }
 \value{

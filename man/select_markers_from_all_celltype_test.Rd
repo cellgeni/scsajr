@@ -11,14 +11,14 @@ select_markers_from_all_celltype_test(
 )
 }
 \arguments{
-\item{all_celltype_df}{A data.frame (rownames = segment IDs) (output of \code{test_all_groups_as()}), containing columns:
-\describe{
-\item{overdispersion}{Estimated dispersion from each segment’s GLM.}
-\item{group}{Raw p‐value from the likelihood‐ratio test for the \code{group} term.}
-\item{group_fdr}{Benjamini‐Hochberg adjusted FDR (across all segments).}
-\item{low_state}{Group label with lowest mean PSI (from \code{get_dpsi()}).}
-\item{high_state}{Group label with highest mean PSI.}
-\item{dpsi}{Difference in mean PSI between \code{high_state} and \code{low_state}.}
+\item{all_celltype_df}{A data.frame (rownames = segment IDs) (output of \code{\link{test_all_groups_as}}), containing columns:
+\itemize{
+\item \code{overdispersion}: Estimated dispersion from each segment’s GLM
+\item \code{group}: Raw p‐value from the likelihood‐ratio test for the \code{group} term
+\item \code{group_fdr}: Benjamini‐Hochberg adjusted FDR (across all segments)
+\item \code{low_state}: Group label with lowest mean PSI (from \code{get_dpsi()})
+\item \code{high_state}: Group label with highest mean PSI
+\item \code{dpsi}: Difference in mean PSI between \code{high_state} and \code{low_state}
 }}
 
 \item{fdr_thr}{Numeric: false discovery rate cutoff (default: 0.05).}
@@ -28,17 +28,17 @@ select_markers_from_all_celltype_test(
 \value{
 A data.frame with one row per segment satisfying \code{group_fdr < fdr_thr} and \code{dpsi > dpsi_thr}.
 Columns in the returned data.frame:
-\describe{
-\item{\code{pv}}{Raw p‐value from the likelihood‐ratio test for the group effect (copied from \code{all_celltype_df$group}).}
-\item{\code{fdr}}{Benjamini‐Hochberg adjusted FDR (copied from \code{all_celltype_df$group_fdr}).}
-\item{\code{dpsi}}{Delta‐PSI (copied from \code{all_celltype_df$dpsi}).}
-\item{\code{seg_id}}{Segment ID (rownames of \code{all_celltype_df}).}
-\item{\code{group}}{Group label with highest mean PSI (copied from \code{all_celltype_df$high_state}).}
-}
+\itemize{
+\item \code{pv}: Raw p‐value from the likelihood‐ratio test for the group effect (copied from \code{all_celltype_df$group})
+\item \code{fdr}: Benjamini‐Hochberg adjusted FDR (copied from \code{all_celltype_df$group_fdr})
+\item \code{dpsi}: Delta‐PSI (copied from \code{all_celltype_df$dpsi})
+\item \code{seg_id}: Segment ID (rownames of \code{all_celltype_df})
+\item \code{group}: Group label with highest mean PSI (copied from \code{all_celltype_df$high_state})
 Row names of the returned data.frame are the segment IDs.
 }
+}
 \description{
-From a data.frame of per‐segment results comparing all groups simultaneously (e.g., output of \code{test_all_groups_as()}),
+From a data.frame of per‐segment results comparing all groups simultaneously (e.g., output of \code{\link{test_all_groups_as}}),
 this function selects only those segments that pass both a group‐level FDR threshold and a minimum delta‐PSI threshold.
 It returns a data.frame with one row per qualifying segment.
 }

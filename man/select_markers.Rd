@@ -14,11 +14,11 @@ select_markers(
 }
 \arguments{
 \item{markers}{A list containing numeric matrices \code{pv}, \code{fdr}, and \code{dpsi},
-each a matrix with rows = segments and columns = group labels (as returned by \code{find_marker_as()}).
-\describe{
-\item{\code{markers$pv}}{Matrix of raw p‐values, dimensions: ∣segments∣ × ∣groups∣.}
-\item{\code{markers$fdr}}{Matrix of Benjamini‐Hochberg adjusted FDR p‐values, same dimensions.}
-\item{\code{markers$dpsi}}{Matrix of delta‐PSI (mean PSI(group) - mean PSI(others)), same dimensions.}
+each a matrix with rows = segments and columns = group labels (as returned by \code{\link{find_marker_as}}).
+\itemize{
+\item \code{markers$pv}: Matrix of raw p‐values, dimensions: ∣segments∣ × ∣groups∣
+\item \code{markers$fdr}: Matrix of Benjamini‐Hochberg adjusted FDR p‐values, same dimensions
+\item \code{markers$dpsi}: Matrix of delta‐PSI (mean PSI(group) - mean PSI(others)), same dimensions
 }}
 
 \item{n}{Integer: maximum number of markers to return per cell type (default: 5).}
@@ -32,17 +32,17 @@ each a matrix with rows = segments and columns = group labels (as returned by \c
 }
 \value{
 A data.frame with selected marker segments. Columns:
-\describe{
-\item{\code{pv}}{Raw p‐value from the likelihood‐ratio test for the group effect in the selected group.}
-\item{\code{fdr}}{Benjamini‐Hochberg adjusted FDR value for the segment in the selected group.}
-\item{\code{dpsi}}{Delta‐PSI (signed) for the segment in the selected group.}
-\item{\code{seg_id}}{Segment identifier (rownames of \code{markers$pv}).}
-\item{\code{group}}{Group label for which this segment is selected.}
-}
+\itemize{
+\item \code{pv}: Raw p‐value from the likelihood‐ratio test for the group effect in the selected group
+\item \code{fdr}: Benjamini‐Hochberg adjusted FDR value for the segment in the selected group
+\item \code{dpsi}: Delta‐PSI (signed) for the segment in the selected group
+\item \code{seg_id}: Segment identifier (rownames of \code{markers$pv})
+\item \code{group}: Group label for which this segment is selected
 Rows are ordered by descending |dpsi| across all selected segments.
 }
+}
 \description{
-From a list of per‐segment test results (as returned by \code{find_marker_as()}),
+From a list of per‐segment test results (as returned by \code{\link{find_marker_as}}),
 this function selects up to \code{n} top segments per group
 whose FDR is below a threshold and whose absolute delta‐PSI exceeds a threshold.
 Optionally, it removes duplicate segments so that each segment appears only once
@@ -77,5 +77,5 @@ head(df)
 
 }
 \seealso{
-\verb{\link{find_marker_as}}, \verb{\link{test_all_groups_as}}, \verb{\link{test_pair_as}}
+\code{\link{find_marker_as}}, \code{\link{test_all_groups_as}}, \code{\link{test_pair_as}}
 }

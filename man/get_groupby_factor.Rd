@@ -7,25 +7,25 @@
 get_groupby_factor(x, groupby, sep = "$")
 }
 \arguments{
-\item{x}{Either a \code{SummarizedExperiment} (in which case its \code{colData()} is used) or a \code{data.frame} whose rows correspond to samples/pseudobulks.}
+\item{x}{Either
+\itemize{
+\item SummarizedExperiment (in which case its \code{colData()} is used) or
+\item data.frame whose rows correspond to samples/pseudobulks.
+}}
 
 \item{groupby}{Either:
 \itemize{
-\item A vector of length \code{nrow(x)} or \code{ncol(x)} (for \code{SummarizedExperiment}):: treated as the grouping factor directly.
-\item A character scalar or vector of column names in \code{x} (or in \code{colData(x)} if \code{x} is a \code{SummarizedExperiment}):
+\item Vector of length \code{nrow(x)} or \code{ncol(x)} (for \code{SummarizedExperiment}): treated as the grouping factor directly.
+\item Character scalar or vector of column names in \code{x} (or in \code{colData(x)} if \code{x} is a \code{SummarizedExperiment}):
 those columns are concatenated row-wise (using \code{paste()} or \code{interaction()}) to form a grouping factor.
 }}
 
-\item{sep}{Character string used to separate pasted values when \code{groupby} is multiple column names. Default is \code{"\\$"}.}
+\item{sep}{Character: char used to separate pasted values when \code{groupby} is multiple column names. Default is \code{"$"}.}
 }
 \value{
-A character vector (or factor) of length \code{nrow(x)}, representing the grouping factor.
+Character vector (or factor) of length \code{nrow(x)}, representing the grouping factor.
 If \code{groupby} was already the same length as \code{nrow(x)}, it is returned unchanged.
 Otherwise, it pastes together columns of \code{x}.
-
-A vector (typically a factor or character vector) of length equal to \code{nrow(x)} (for \code{data.frame}) or \code{ncol(x)} (for \code{SummarizedExperiment}), representing the grouping factor.
-If \code{groupby} was already the correct length, it is returned unchanged.
-Otherwise, it pastes or interacts specified columns of \code{x}.
 }
 \description{
 If \code{groupby} is a vector (e.g., a factor) whose length matches the number of rows of a \code{data.frame} or the number of columns of a \code{SummarizedExperiment}, it is returned unchanged.
@@ -58,5 +58,5 @@ print(grp3)
 
 }
 \seealso{
-\verb{\link{filter_segments_and_samples}}, \verb{\link{test_all_groups_as}}
+\code{\link{filter_segments_and_samples}}, \code{link{test_all_groups_as}}
 }

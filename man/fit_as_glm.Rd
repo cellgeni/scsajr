@@ -17,50 +17,51 @@ fit_as_glm(
 )
 }
 \arguments{
-\item{pbas}{A \code{SummarizedExperiment} where each row is a segment and each column is a pseudobulk.
-Must contain assays named “i” (inclusion) and “e” (exclusion).
+\item{pbas}{SummarizedExperiment: each row is a segment and each column is a pseudobulk.
+Must contain assays named \code{i} (inclusion) and \code{e} (exclusion).
 Rows correspond to segments; columns correspond to samples/pseudobulks.}
 
-\item{formula}{An \verb{\link[stats]\{formula\}} object specifying the model, e.g., \code{i ~ group}.
-Internally, the function treats “i” and “e” as a two‐column response.}
+\item{formula}{\code{\link[stats]{formula}}: specifies the model, (e.g. \code{i ~ group}).
+Internally, the function treats \code{i} and \code{e} as a two‐column response.}
 
-\item{data_terms}{A named list of covariates: data.frame columns referenced in \code{formula}.
+\item{data_terms}{Named list: covariates data.frame columns referenced in \code{formula}.
 For example, if \code{formula = i ~ group}, then \code{data_terms = list(group = group_factor)} where \code{group_factor} is a vector of length \code{ncol(pbas)}.}
 
-\item{pseudocount}{A numeric fraction of each count total to add to both “i” and “e”, expressed as a fraction of the total counts. Default 0 (no pseudocount).}
+\item{pseudocount}{Numeric: of each count total to add to both \code{i} and \code{e}, expressed as a fraction of the total counts. Default 0 (no pseudocount).}
 
-\item{parallel}{Logical; if \code{TRUE}, uses \verb{\link[plyr]\{alply\}(…, .parallel = TRUE)} to fit models in parallel (requires registered backend). Default \code{FALSE}.}
+\item{parallel}{Logical: if \code{TRUE}, uses \verb{\code{\link[plyr]{alply}}(…, .parallel = TRUE)} to fit models in parallel (requires registered backend). Default \code{FALSE}.}
 
-\item{progress}{Character string passed to \code{.progress} in \verb{\link[plyr]\{alply\}}. Default \code{"none"}.}
+\item{progress}{Character: passed to \code{.progress} in \code{\link[plyr]{alply}}. Default \code{"none"}.}
 
-\item{return_pv}{Logical; if \code{TRUE}, perform a quasi‐likelihood ratio test per segment to return p‐values for each term in \code{formula}.
+\item{return_pv}{Logical: if \code{TRUE}, perform a quasi‐likelihood ratio test per segment to return p‐values for each term in \code{formula}.
 Otherwise, return fitted \verb{\link[stats]\{glm\}} objects. Default \code{FALSE}.}
 
-\item{overdisp}{Logical; if \code{TRUE}, account for overdispersion when computing test statistics. Default \code{TRUE}.}
+\item{overdisp}{Logical: if \code{TRUE}, account for overdispersion when computing test statistics. Default \code{TRUE}.}
 
-\item{disp_param}{Optional numeric vector of length \code{nrow(pbas)} providing dispersion parameters per segment.
-If \code{NULL}, dispersion is estimated from each model’s residuals.}
+\item{disp_param}{Numeric vector of length \verb{nrow(pbas): provides dispersion parameters per segment. If }NULL`, dispersion is estimated from each model’s residuals.}
 }
 \value{
-If \code{return_pv = FALSE}, a named list of length \code{nrow(pbas)} of fitted \code{glm} objects
+\itemize{
+\item If \code{return_pv = FALSE}, a named list of length \code{nrow(pbas)} of fitted \code{glm} objects
 (or \code{NA} for segments where fitting failed). Names correspond to \code{rownames(pbas)}.
-If \code{return_pv = TRUE}, a data.frame with one row per segment, columns:
-\describe{
-\item{overdispersion}{Estimated dispersion (or provided \code{disp_param}).}
-\item{\if{html}{\out{<term>}}}{Likelihood‐ratio p‐value for each term in \code{formula}.}
-}
+\item If \code{return_pv = TRUE}, a data.frame with one row per segment, columns:
+\itemize{
+\item overdispersion: Estimated dispersion (or provided \code{disp_param})
+\item term: Likelihood‐ratio p‐value for each term in \code{formula}
 Row names correspond to \code{rownames(pbas)}.
 }
+}
+}
 \description{
-For each segment (row) in a \code{SummarizedExperiment} with assays “i” (inclusion counts) and “e” (exclusion counts),
+For each segment (row) in a \code{SummarizedExperiment} with assays \code{i} (inclusion counts) and \code{e} (exclusion counts),
 this function fits a quasi‐binomial generalized linear model of the form \code{i / (i + e) ~ predictors},
 adding a pseudocount if desired. It can optionally return p‐values via a likelihood‐ratio test.
 }
 \details{
 The function loops over each segment, constructs a two‐column matrix \code{cbind(i, e)}, adds pseudocounts if requested, and fits a quasi‐binomial \verb{\link[stats]\{glm\}}.
-If \code{return_pv = TRUE}, it calls \verb{\link{qbinom_lrt}} to compute a likelihood‐ratio test for each term in \code{formula}.
+If \code{return_pv = TRUE}, it calls \code{\link{qbinom_lrt}} to compute a likelihood‐ratio test for each term in \code{formula}.
 Any errors or warnings during fitting are caught; segments with fitting errors return \code{NA}.
 }
 \seealso{
-\verb{\link{qbinom_lrt}}, \verb{\link[stats]\{glm\}}, \verb{\link[plyr]\{alply\}}
+\code{\link{qbinom_lrt}}, \code{\link[stats]{glm}}, \code{\link[plyr]{alply}}
 }

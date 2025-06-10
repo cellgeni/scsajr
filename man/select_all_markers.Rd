@@ -14,21 +14,21 @@ select_all_markers(
 }
 \arguments{
 \item{markers}{A list containing numeric matrices \code{pv}, \code{fdr}, and \code{dpsi},
-each a matrix with rows = segments and columns = group labels (as returned by \code{find_marker_as()}).
-\describe{
-\item{\code{markers$pv}}{Matrix of raw p‐values, dimensions: ∣segments∣ × ∣groups∣.}
-\item{\code{markers$fdr}}{Matrix of Benjamini‐Hochberg adjusted FDR p‐values, same dimensions.}
-\item{\code{markers$dpsi}}{Matrix of delta‐PSI (mean PSI(group) - mean PSI(others)), same dimensions.}
+each a matrix with rows = segments and columns = group labels (as returned by \code{\link{find_marker_as}}).
+\itemize{
+\item \code{markers$pv}: Matrix of raw p‐values, dimensions: ∣segments∣ × ∣groups∣
+\item \code{markers$fdr}: Matrix of Benjamini‐Hochberg adjusted FDR p‐values, same dimensions
+\item \code{markers$dpsi}: Matrix of delta‐PSI (mean PSI(group) - mean PSI(others)), same dimensions
 }}
 
-\item{all_celltype_df}{A data.frame (rownames = segment IDs) (output of \code{test_all_groups_as()}), containing columns:
-\describe{
-\item{overdispersion}{Estimated dispersion from each segment’s GLM.}
-\item{group}{Raw p‐value from the likelihood‐ratio test for the \code{group} term.}
-\item{group_fdr}{Benjamini‐Hochberg adjusted FDR (across all segments).}
-\item{low_state}{Group label with lowest mean PSI (from \code{get_dpsi()}).}
-\item{high_state}{Group label with highest mean PSI.}
-\item{dpsi}{Difference in mean PSI between \code{high_state} and \code{low_state}.}
+\item{all_celltype_df}{A data.frame (rownames = segment IDs) (output of \code{\link{test_all_groups_as}}), containing columns:
+\itemize{
+\item \code{overdispersion}: Estimated dispersion from each segment’s GLM
+\item \code{group}: Raw p‐value from the likelihood‐ratio test for the \code{group} term
+\item \code{group_fdr}: Benjamini‐Hochberg adjusted FDR (across all segments)
+\item \code{low_state}: Group label with lowest mean PSI (from \code{get_dpsi()})
+\item \code{high_state}: Group label with highest mean PSI
+\item \code{dpsi}: Difference in mean PSI between \code{high_state} and \code{low_state}
 }}
 
 \item{n}{Integer: maximum number of markers to return per cell type (after combining) (default: \code{Inf} (no limit)).}
@@ -39,15 +39,15 @@ each a matrix with rows = segments and columns = group labels (as returned by \c
 }
 \value{
 A data.frame with one row per selected segment, containing:
-\describe{
-\item{\code{pv}}{Raw p‐value (from either per‐group or all‐groups test).}
-\item{\code{fdr}}{Adjusted FDR (from the same test).}
-\item{\code{dpsi}}{Delta‐PSI (for the group that nominated this segment).}
-\item{\code{seg_id}}{Segment IDs (rownames).}
-\item{\code{group}}{Group label for which the segment is selected.}
-\item{\code{is_marker}}{Logical: \code{TRUE} if selected by the per‐group test, \code{FALSE} if only from the all‐groups test.}
-}
+\itemize{
+\item \code{pv}: Raw p‐value (from either per‐group or all‐groups test)
+\item \code{fdr}: Adjusted FDR (from the same test)
+\item \code{dpsi}: Delta‐PSI (for the group that nominated this segment)
+\item \code{seg_id}: Segment IDs (rownames)
+\item \code{group}: Group label for which the segment is selected
+\item \code{is_marker}: Logical: \code{TRUE} if selected by the per‐group test, \code{FALSE} if only from the all‐groups test
 Row names are the segment IDs. Rows are ordered within each group by descending |dpsi| and limited to \code{n} per group.
+}
 }
 \description{
 This function merges two sets of marker results:
@@ -71,5 +71,5 @@ For each group, among combined rows (priority first), keep at most \code{n} segm
 }
 }
 \seealso{
-\verb{\link{select_markers}}, \verb{\link{select_markers_from_all_celltype_test}}
+\code{\link{select_markers}}, \code{\link{select_markers_from_all_celltype_test}}
 }

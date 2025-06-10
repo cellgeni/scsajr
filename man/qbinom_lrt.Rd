@@ -9,18 +9,18 @@ qbinom_lrt(fit_obj, overdisp = TRUE, disp_param = NULL, term_labels, seg_id)
 \arguments{
 \item{fit_obj}{A fitted \code{glm} object (quasi‐binomial family).}
 
-\item{overdisp}{Logical; if \code{TRUE}, use estimated dispersion from \code{fit_obj} (or \code{disp_param}) when computing test statistics.
+\item{overdisp}{Logical: if \code{TRUE}, use estimated dispersion from \code{fit_obj} (or \code{disp_param}) when computing test statistics.
 If \code{FALSE}, force dispersion = 1 (i.e., treat as simple binomial).}
 
-\item{disp_param}{Optional numeric; if provided, use this as the dispersion parameter for the test.
+\item{disp_param}{Optional numeric: if provided, use this as the dispersion parameter for the test.
 Otherwise, estimate dispersion from \code{fit_obj}’s residuals.}
 
-\item{term_labels}{Character vector of term names (excluding the intercept) in the original formula, in the same order returned by \code{attr(terms(formula), "term.labels")}.}
+\item{term_labels}{Character vector: term names (excluding the intercept) in the original formula, in the same order returned by \code{attr(terms(formula), "term.labels")}.}
 
-\item{seg_id}{Character; segment identifier (row name) used in warning messages.}
+\item{seg_id}{Character: segment identifier (row name) used in warning messages.}
 }
 \value{
-A numeric vector of length \code{length(term_labels) + 1}.
+Numeric vector of length \code{length(term_labels) + 1}.
 The first element is the dispersion estimate actually used (either \code{disp_param} or \code{summary(fit_obj)$dispersion}),
 and the remaining elements are p‐values (Chisq tests) for each term in \code{term_labels}, in the same order.
 If \code{fit_obj} is \code{NA} (fitting failed), returns a vector of \code{NA}s of appropriate length.
@@ -30,14 +30,14 @@ Given a fitted \code{glm(..., family = "quasibinomial")}, this function computes
 }
 \details{
 \enumerate{
-\item If \code{disp_param} is \code{NULL}, we take \code{summary(fit_obj)$dispersion} as the overdispersion estimate.
-If the model has zero residual degrees of freedom, dispersion cannot be estimated; in that case, we return \code{NA} for dispersion and issue a warning (unless \code{overdisp = FALSE}).
-\item We set \verb{disp_used = max(1, <disp_estimate>)} so that the effective dispersion is at least 1. If \code{overdisp = FALSE}, we force \code{disp_used = 1}.
-\item We then call \verb{\link[stats]\{anova\}(fit_obj, test = "Chisq", dispersion = disp_used)}.
+\item If \code{disp_param} is \code{NULL}, takes \code{summary(fit_obj)$dispersion} as the overdispersion estimate.
+If the model has zero residual degrees of freedom, dispersion cannot be estimated; in that case, return \code{NA} for dispersion and issue a warning (unless \code{overdisp = FALSE}).
+\item Set \verb{disp_used = max(1, <disp_estimate>)} so that the effective dispersion is at least 1. If \code{overdisp = FALSE}, we force \code{disp_used = 1}.
+\item Call \link[stats]{anova}(fit_obj, test = "Chisq", dispersion = disp_used)`.
 The p‐values for each term appear in column 5 of the ANOVA table.
-\item If any error occurs when computing the ANOVA, we return \code{rep(NA, length(term_labels) + 1)}.
+\item If any error occurs when computing the ANOVA, return \code{rep(NA, length(term_labels) + 1)}.
 }
 }
 \seealso{
-\verb{\link{fit_as_glm}}, \verb{\link[stats]\{anova\}}, \verb{\link[stats]\{glm\}}
+\code{\link{fit_as_glm}}, \code{\link[stats]{anova}}, \code{\link[stats]{glm}}
 }

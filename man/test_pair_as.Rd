@@ -7,32 +7,33 @@
 test_pair_as(pbas, groupby, conditions, parallel = FALSE)
 }
 \arguments{
-\item{pbas}{A \code{SummarizedExperiment} where each row is a segment and each column is a pseudobulk.
-Must contain assays named “i” (inclusion) and “e” (exclusion).
+\item{pbas}{SummarizedExperiment: each row is a segment and each column is a pseudobulk.
+Must contain assays named \code{i} (inclusion) and \code{e} (exclusion).
 Rows correspond to segments; columns correspond to samples/pseudobulks.}
 
 \item{groupby}{Either:
 \itemize{
-\item A vector of length \code{ncol(pbas)} that directly gives a group label for each column, or
-\item One or more column names in \code{colData(pbas)}, whose values (pasted together if multiple) define the grouping factor.
-}
-See \verb{\link{get_groupby_factor}} for details.}
+\item Vector of length \code{nrow(x)} or \code{ncol(x)} (for \code{SummarizedExperiment}): treated as the grouping factor directly.
+\item Character scalar or vector of column names in \code{x} (or in \code{colData(x)} if \code{x} is a \code{SummarizedExperiment}):
+those columns are concatenated row-wise (using \code{paste()} or \code{interaction()}) to form a grouping factor.
+See \code{\link{get_groupby_factor}} for details.
+}}
 
-\item{conditions}{A length‐2 character vector specifying the two group labels to compare (e.g., \code{c("A", "B")}).}
+\item{conditions}{Character vector (length: 2): specifies the two group labels to compare (e.g., \code{c("A", "B")}).}
 
 \item{parallel}{Logical; if \code{TRUE}, fit per‐segment GLMs in parallel (requires a registered \code{plyr} backend). Default \code{FALSE}.}
 }
 \value{
 A data.frame with one row per segment (rownames = \code{rownames(pbas)}), containing columns:
-\describe{
-\item{overdispersion}{Estimated dispersion from each segment’s GLM.}
-\item{pv}{Raw p‐value for the group term (two‐level factor).}
-\item{fdr}{Benjamini-Hochberg FDR (across all segments).}
-\item{dpsi}{Difference in mean PSI between \code{conditions[2]} and \code{conditions[1]}.}
+\itemize{
+\item overdispersion: Estimated dispersion from each segment’s GLM
+\item pv: Raw p‐value for the group term (two‐level factor)
+\item fdr: Benjamini-Hochberg FDR (across all segments)
+\item dpsi: Difference in mean PSI between \code{conditions[2]} and \code{conditions[1]}
 }
 }
 \description{
-For a \code{SummarizedExperiment} of splicing segments with assays “i” (inclusion counts) and “e” (exclusion counts),
+For a \code{SummarizedExperiment} of splicing segments with assays \code{i} (inclusion counts) and \code{e} (exclusion counts),
 this function tests for differential splicing between two specified groups (e.g., two cell types) using a quasi‐binomial GLM per segment.
 It returns a data.frame of p‐values, FDR, and delta‐PSI between the two conditions.
 }
@@ -47,5 +48,5 @@ mean PSI per condition and subtracting.
 }
 }
 \seealso{
-\verb{\link{fit_as_glm}}, \verb{\link{get_groupby_factor}}, \code{\link{calc_psi}}, \link{pseudobulk}, \verb{\link{test_all_groups_as}}
+\code{\link{fit_as_glm}}, \code{\link{get_groupby_factor}}, \code{\link{calc_psi}}, \code{\link{pseudobulk}}, \code{\link{test_all_groups_as}}
 }

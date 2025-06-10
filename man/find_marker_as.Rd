@@ -7,29 +7,30 @@
 find_marker_as(pbas, groupby, parallel = FALSE, verbose = FALSE)
 }
 \arguments{
-\item{pbas}{A \code{SummarizedExperiment} where each row is a segment and each column is a pseudobulk.
+\item{pbas}{SummarizedExperiment: each row is a segment and each column is a pseudobulk.
 Must contain assays “i”, “e”, and “psi”.
 Rows correspond to segments; columns correspond to samples/pseudobulks.}
 
 \item{groupby}{Either:
 \itemize{
-\item A vector of length \code{ncol(pbas)} that directly gives a group label for each column, or
-\item One or more column names in \code{colData(pbas)}, whose values (pasted together if multiple) define the grouping factor.
-}
-See \verb{\link{get_groupby_factor}} for details.}
+\item Vector of length \code{nrow(x)} or \code{ncol(x)} (for \code{SummarizedExperiment}): treated as the grouping factor directly.
+\item Character scalar or vector of column names in \code{x} (or in \code{colData(x)} if \code{x} is a \code{SummarizedExperiment}):
+those columns are concatenated row-wise (using \code{paste()} or \code{interaction()}) to form a grouping factor.
+See \code{\link{get_groupby_factor}} for details.
+}}
 
-\item{parallel}{Logical; if \code{TRUE}, fit per‐segment GLMs in parallel (requires a registered \code{plyr} backend). Default \code{FALSE}.}
+\item{parallel}{Logical: if \code{TRUE}, fit per‐segment GLMs in parallel (requires a registered \code{plyr} backend). Default \code{FALSE}.}
 
-\item{verbose}{Logical; if \code{TRUE}, prints each group being tested. Default \code{FALSE}.}
+\item{verbose}{Logical: if \code{TRUE}, prints each group being tested. Default \code{FALSE}.}
 }
 \value{
 A list with three elements:
-\describe{
-\item{pv}{Matrix: Raw p‐values, with rows = segments, columns = group labels}
-\item{fdr}{Matrix: Benjamini-Hochberg FDR (across all segments)}
-\item{dpsi}{Matrix: Delta‐PSI (mean PSI(group) - mean PSI(others)) per segment}
+\itemize{
+\item pv Matrix: Raw p‐values, with rows = segments, columns = group labels
+\item fdr Matrix: Benjamini-Hochberg FDR (across all segments)
+\item dpsi Matrix: Delta‐PSI (mean PSI(group) - mean PSI(others)) per segment
+Row names of each matrix are \code{rownames(pbas)}; column names are the unique groups
 }
-Row names of each matrix are \code{rownames(pbas)}; column names are the unique groups.
 }
 \description{
 For a \code{SummarizedExperiment} of splicing segments with assays “psi” (percent spliced‐in),
@@ -51,5 +52,5 @@ It returns p‐values and delta‐PSI matrices (segments × groups).
 }
 }
 \seealso{
-\verb{\link{fit_as_glm}}, \verb{\link{get_groupby_factor}}, \verb{\link{calc_psi}}
+\code{\link{fit_as_glm}}, \code{\link{get_groupby_factor}}, \code{\link{calc_psi}}
 }

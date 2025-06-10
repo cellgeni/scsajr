@@ -13,12 +13,11 @@ Row names should match column names of the corresponding \code{SummarizedExperim
 
 \item{groupby}{Either:
 \itemize{
-\item A character vector of length \code{nrow(meta)} giving a grouping label for each row of \code{meta}, or
-\item One or more column names in \code{meta}. In that case, the values of those columns are pasted (row‐wise)
-with the default delimiter to form a grouping factor via \code{get_groupby_factor()}.
-}
-After grouping, columns with the same label will be summed together.
-See \code{get_groupby_factor()} for details on how the grouping vector is constructed.}
+\item Vector of length \code{nrow(x)} or \code{ncol(x)} (for \code{SummarizedExperiment}): treated as the grouping factor directly.
+\item Character scalar or vector of column names in \code{x} (or in \code{colData(x)} if \code{x} is a \code{SummarizedExperiment}):
+those columns are concatenated row-wise (using \code{paste()} or \code{interaction()}) to form a grouping factor.
+See \code{\link{get_groupby_factor}} for details.
+}}
 
 \item{aggregate}{A named list of functions to apply to each column within each group.
 For example, \code{list(ncells = sum, ngenes = max)} would sum the \code{ncells} column and take

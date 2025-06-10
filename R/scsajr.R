@@ -3,325 +3,499 @@
 # Need to add package description
 # Need to figureout how to keep links in the Roxygen documentation
 
-#' Filter segments and samples based on coverage and group criteria
+
+###### prepare_reference.R ######
+
+#' Annotate coding status of segments using a GTF file
 #'
-#' This function takes a `SummarizedExperiment` containing alternative splicing data
-#' (with assays “i” for inclusion counts and “e” for exclusion counts), and filters out:
-#'   1. pseudobulk samples with fewer than `sample_min_ncells` cells,
-#'   2. cell‐type groups with fewer than `celltype_min_samples` samples,
-#'   3. segments (rows) that do not meet minimum coverage across pseudobulks,
-#'   4. segments with low variability (standard deviation of PSI).
+#' Given a path to an Ensembl GTF (gene annotation) and an AS result list containing segment coordinates,
+#'  this function determines whether each segment overlaps coding sequence (CDS) regions.
+#' It assigns coding status:
+#'   - 'c' if the segment is fully contained within a CDS (i.e., likely constitutive exon),
+#'   - 'p' if the segment partially overlaps a CDS,
+#'   - 'n' if the segment does not overlap any CDS.
+#' It also flags whether the segment’s gene has at least one coding overlap.
 #'
-#' @param pbas A `SummarizedExperiment` where each row is a segment and each column is a pseudobulk.
-#'   Must contain assays named “i” (inclusion) and “e” (exclusion).
-#'   Rows correspond to segments; columns correspond to samples/pseudobulks.
-#' @param sample_filter Logical vector (length = number of columns in `pbas`) indicating which samples to retain initially.
-#'   Defaults to `TRUE` for all samples.
-#' @param sites Character vector of splice‐site patterns to keep (e.g., `c("ad", "aa", "dd")`). Only segments whose `rowData(pbas)$sites` is in this set will be retained.
-#' @param min_cov Minimum total junction coverage (`i + e`) for a pseudobulk to count toward segment inclusion. Default 10.
-#' @param sample_min_ncells Minimum number of cells per pseudobulk; pseudobulk samples with fewer cells are filtered out. Default 20.
-#' @param celltype_min_samples Minimum number of pseudobulk samples per group (as defined by `groupby`) to keep that group. Default 2.
-#' @param seg_min_samples The absolute minimum number of pseudobulks (after filtering by `min_cov`) that a segment must be observed in. Default 4.
-#' @param seg_min_samples_fraq Minimum fraction of total pseudobulk samples that must meet `min_cov` for a segment to be retained. Default 0.2.
-#'   The effective minimum samples per segment is `max(seg_min_samples, ncol(pbas) * seg_min_samples_fraq)`.
-#' @param seg_min_sd Minimum standard deviation of PSI (percent spliced‐in) across pseudobulks for a segment to be retained. Default 0.1.
-#' @param groupby Either (a) a character vector of length `ncol(pbas)` giving an existing grouping factor for each column, or
-#'   (b) a character scalar or vector of column names in `colData(pbas)` whose pasted‐together values define the grouping factor.
-#'   See `\link{get_groupby_factor}` for details.
+#' @param gtf_path Character: path to an Ensembl GTF file
+#'   (tab‐delimited, with columns: `chr_id`, `feature` (e.g., "CDS"), `start`, `stop`, `strand`, and gene metadata).
+#'   Must be readable by `read.table(..., comment.char = "#")`.
+#' @param as_list SAJR::loadSAData() output list containing segment coordinates.
+#' List contains at least `seg`: (A data.frame with columns `chr_id`, `start`, `stop`, `strand`, and `gene_id` for each segment. Row names are segment IDs)
 #'
-#' @return A filtered `SummarizedExperiment`, containing only those pseudobulks and segments that satisfy all criteria.
-#'   The returned object will always have assays “i”, “e” converted to dense matrices, and will include a “psi” assay (percent spliced‐in) for each retained segment/samples.
-#'   The `rowData` will also contain a column “nna” (number of pseudobulks with `i+e >= min_cov`) and “sd” (standard deviation of PSI).
+#' @return The input `as_list` with additional columns:
+#'   - `seg$cod`: Character vector of length ∣segments∣.
+#'                Each element is `'c'` if the segment is completely within a CDS, `'p'` if partially overlaps, or `'n'` if no overlap
+#'   - `seg$cod.gene`: Logical vector of length ∣segments∣. `TRUE` if the segment’s gene contains at least one segment with `cod != 'n'`
+#'   The modified `as_list` is returned invisibly.
+#'
+#' @details
+#' 1. Read the GTF file via `read.table(gtf_path, sep = "\t", header = FALSE, comment.char = "#")` and
+#'    filter to rows where the second column (`feature`) == "CDS".
+#'    Keep columns: `chr_id`, `start`, `stop`, `strand`.
+#' 2. Force CDS entries to a `GRanges` using `GenomicRanges::GRanges()`.
+#'    - If some `chr_id` values lack the "chr" prefix but segments use it (or vice versa), prefix or strip "chr" to match.
+#' 3. Reduce the CDS ranges per chromosome/strand to merge overlapping exons (via `reduce()`).
+#' 4. Build a `GRanges` for all segments from `as_list$seg`, using `chr_id`, `start`, `stop`, and `strand`.
+#' 5. Use `findOverlaps(seg_gr, cds_gr, type = "any")` to find any overlap, and `findOverlaps(seg_gr, cds_gr, type = "within")` to find full containment.
+#' 6. Initialise `cod = 'n'` for all segments. For indices in the "any" overlap set, set `cod = 'p'`. For indices in the "within" set, set `cod = 'c'`.
+#' 7. Determine `cod.gene` by marking as `TRUE` any segment whose `gene_id` appears among those with `cod != 'n'`.
+#'
+#' @note
+#' - If chromosome naming mismatches occur ("chr1" vs. "1"), this function attempts to harmonize by adding "chr" prefix where needed.
+#'
+#' @seealso \code{\link[GenomicRanges]{GRanges}}, \code{\link[GenomicRanges]{findOverlaps}}, \code{\link[GenomicRanges]{reduce}}
+#' @export
+add_is_coding_by_ens_gtf <- function(gtf_path, as_list) {
+  # 1. Read GTF and keep only CDS lines
+  gtf_df <- utils::read.table(gtf_path,
+    sep = "\t",
+    header = FALSE,
+    comment.char = "#",
+    stringsAsFactors = FALSE
+  )
+  # Columns: V1=chr_id, V3=feature, V4=start, V5=stop, V7=strand
+  cds_df <- gtf_df[gtf_df[, 3] == "CDS", , drop = FALSE]
+  colnames(cds_df)[c(1, 4, 5, 7)] <- c("chr_id", "start", "stop", "strand") # Rename columns for clarity
+  cds_df <- cds_df[, c("chr_id", "start", "stop", "strand")]
+
+
+  # 2. CDS Entries: GRanges
+  # Harmonize chromosome naming: if some segment chr_ids have "chr" prefix but CDS lack it, or vice versa
+  seg_chr <- as_list$seg$chr_id
+  if (any(startsWith(seg_chr, "chr")) && !any(startsWith(cds_df$chr_id, "chr"))) {
+    cds_df$chr_id <- paste0("chr", cds_df$chr_id)
+  } else if (!any(startsWith(seg_chr, "chr")) && any(startsWith(cds_df$chr_id, "chr"))) {
+    cds_df$chr_id <- sub("^chr", "", cds_df$chr_id)
+  }
+
+  # Build GRanges for CDS
+  cds_gr <- GenomicRanges::GRanges(
+    seqnames = cds_df$chr_id,
+    ranges   = IRanges::IRanges(start = cds_df$start, end = cds_df$stop),
+    strand   = cds_df$strand
+  )
+
+
+  # 3. Merge overlapping CDS ranges
+  cds_gr <- GenomicRanges::reduce(cds_gr)
+
+
+  # 4. Build GRanges for segments
+  seg_df <- as_list$seg
+  seg_gr <- GenomicRanges::GRanges(
+    seqnames = seg_df$chr_id,
+    ranges = IRanges::IRanges(start = seg_df$start, end = seg_df$stop),
+    strand = ifelse(is.na(seg_df$strand), "*",
+      ifelse(seg_df$strand == 1, "+", ifelse(seg_df$strand == -1, "-", "*"))
+    )
+  )
+
+
+  # 5. Find overlaps: any vs. within
+  ol_any <- GenomicRanges::findOverlaps(seg_gr, cds_gr, type = "any", ignore.strand = FALSE)
+  ol_within <- GenomicRanges::findOverlaps(seg_gr, cds_gr, type = "within", ignore.strand = FALSE)
+
+
+  # 6. Initialise coding status
+  n_segs <- length(seg_gr)
+  cod_stat <- rep("n", n_segs)
+
+  # Mark partial overlaps as "p"
+  ol_any_idx <- unique(S4Vectors::queryHits(ol_any))
+  cod_stat[ol_any_idx] <- "p"
+
+  # Mark full containment as "c"
+  ol_within_idx <- unique(S4Vectors::queryHits(ol_within))
+  cod_stat[ol_within_idx] <- "c"
+
+  # Assign to as_list$seg$cod
+  as_list$seg$cod <- cod_stat
+
+
+  # 7. Determine which genes have at least one coding segment
+  coding_genes <- unique(seg_df$gene_id[cod_stat != "n"])
+  as_list$seg$cod.gene <- seg_df$gene_id %in% coding_genes
+
+  as_list
+}
+
+
+###### combine_sajr_output.R ######
+
+#' Print an informational message with a timestamp
+#'
+#' Prepends `"INFO [<timestamp>]: "` to the given `text` and prints to standard output.
+#'
+#' @param text Character; message text or format string.
+#' @param ... Additional values to append to `text` via `paste0()`.
+#'
+#' @return Invisibly returns `NULL`; prints `"INFO [YYYY-MM-DD HH:MM:SS]: "` followed by `text`.
 #'
 #' @examples
 #' \dontrun{
-#' data(pbas)
-#' filtered_se <- filter_segments_and_samples(
-#'   pbas = pbas,
-#'   sample_filter = TRUE,
-#'   sites = c("ad", "aa", "dd"),
-#'   min_cov = 10,
-#'   sample_min_ncells = 20,
-#'   celltype_min_samples = 2,
-#'   seg_min_samples = 4,
-#'   seg_min_samples_fraq = 0.2,
-#'   seg_min_sd = 0.1,
-#'   groupby = "celltype"
-#' )
-#' head(filtered_se)
+#' log_info("Starting analysis for gene ", gene_id)
 #' }
+#'
 #' @export
-filter_segments_and_samples <- function(
-    pbas,
-    sample_filter = TRUE,
-    sites = c("ad", "aa", "dd"),
-    min_cov = 10,
-    sample_min_ncells = 20,
-    celltype_min_samples = 2,
-    seg_min_samples = 4,
-    seg_min_samples_fraq = 0.2,
-    seg_min_sd = 0.1,
-    groupby = "celltype") {
-  ## 1. Filter out pseudobulk samples with fewer than sample_min_ncells cells
-  # Filter pseudobulk samples with fewer cells
-  sample_filter <- sample_filter & (SummarizedExperiment::colData(pbas)$ncells >= sample_min_ncells)
-
-  # Determine how many samples remain in each group (celltype)
-  group_factor <- get_groupby_factor(pbas, groupby) # returns a factor vector (length = ncol)
-  ct_counts <- table(group_factor[sample_filter]) # Count samples per group (only among those passing sample_filter)
-
-  # Only keep samples whose group has at least 'celltype_min_samples' pseudobulks
-  sample_filter <- sample_filter & (group_factor %in% names(ct_counts)[ct_counts >= celltype_min_samples])
-
-  pbas <- pbas[, sample_filter] # Subset the SummarizedExperiment columns (samples)
-
-
-  ## 2. Filter out cell‐type groups with fewer than celltype_min_samples samples
-  # Keep only rows where rowData(pbas)$sites is in the specified 'sites' vector
-  seg_sel <- SummarizedExperiment::rowData(pbas)$sites %in% sites
-  pbas <- pbas[seg_sel, ]
-
-  # Compute, for each segment, how many pseudobulks have (i + e) >= min_cov
-  #   - assay(pbas, "i") and assay(pbas, "e") give inclusion/exclusion counts
-  #   - Convert these to dense matrices to simplify row/column sums
-  SummarizedExperiment::assay(pbas, "i") <- as.matrix(SummarizedExperiment::assay(pbas, "i"))
-  SummarizedExperiment::assay(pbas, "e") <- as.matrix(SummarizedExperiment::assay(pbas, "e"))
-
-  # 'nna' = number of pseudobulks with total coverage >= min_cov
-  SummarizedExperiment::rowData(pbas)$nna <- Matrix::rowSums((SummarizedExperiment::assay(pbas, "i") + SummarizedExperiment::assay(pbas, "e")) >= min_cov)
-
-
-  ## 3. Filter out segments (rows) that do not meet minimum coverage across pseudobulks
-  # Determine per‐segment minimum required pseudobulks:
-  # If fractional rule (seg_min_samples_fraq) yields more required samples than seg_min_samples,
-  # use the larger of the two.
-  min_samples_required <- max(seg_min_samples, ceiling(ncol(pbas) * seg_min_samples_fraq))
-  seg_sel2 <- SummarizedExperiment::rowData(pbas)$nna >= min_samples_required
-  pbas <- pbas[seg_sel2, ]
-
-
-  ## 4. Compute PSI (percent spliced‐in) and filter by segment variability
-  # Calculate PSI = i / (i + e), setting PSI to NA whenever total coverage < min_cov
-  psi_mat <- calc_psi(pbas, min_cov = min_cov)
-  SummarizedExperiment::assay(pbas, "psi") <- psi_mat
-
-  # Compute standard deviation of PSI across pseudobulks for each segment
-  SummarizedExperiment::rowData(pbas)$sd <- apply(SummarizedExperiment::assay(pbas, "psi"), 1, stats::sd, na.rm = TRUE)
-
-  # Keep only segments with standard deviation above threshold
-  seg_sel3 <- SummarizedExperiment::rowData(pbas)$sd > seg_min_sd
-  pbas <- pbas[seg_sel3, ]
-
-  # Return the filtered SummarizedExperiment
-  return(pbas)
+log_info <- function(text, ...) {
+  msg <- paste0(text, ...)
+  full_msg <- paste0("INFO [", Sys.time(), "]: ", msg)
+  message(full_msg)
+  invisible(NULL)
 }
 
-
-#' Fit a quasi‐binomial GLM for alternative splicing per segment
+#' Read a Matrix Market file with accompanying row/column keys
 #'
-#' For each segment (row) in a `SummarizedExperiment` with assays “i” (inclusion counts) and “e” (exclusion counts),
-#' this function fits a quasi‐binomial generalized linear model of the form `i / (i + e) ~ predictors`,
-#' adding a pseudocount if desired. It can optionally return p‐values via a likelihood‐ratio test.
+#' Attempts to load a sparse matrix from `<prefix>.mtx` or `<prefix>.mtx.gz`,
+#'  and then assigns row names from `<prefix>_key1.csv` (or `.gz`) and column names from `<prefix>_key2.csv` (or `.gz`).
 #'
-#' @param pbas A `SummarizedExperiment` where each row is a segment and each column is a pseudobulk.
-#'   Must contain assays named “i” (inclusion) and “e” (exclusion).
-#'   Rows correspond to segments; columns correspond to samples/pseudobulks.
-#' @param formula An `\link[stats]{formula}` object specifying the model, e.g., `i ~ group`.
-#'   Internally, the function treats “i” and “e” as a two‐column response.
-#' @param data_terms A named list of covariates: data.frame columns referenced in `formula`.
-#'   For example, if `formula = i ~ group`, then `data_terms = list(group = group_factor)` where `group_factor` is a vector of length `ncol(pbas)`.
-#' @param pseudocount A numeric fraction of each count total to add to both “i” and “e”, expressed as a fraction of the total counts. Default 0 (no pseudocount).
-#' @param parallel Logical; if `TRUE`, uses `\link[plyr]{alply}(…, .parallel = TRUE)` to fit models in parallel (requires registered backend). Default `FALSE`.
-#' @param progress Character string passed to `.progress` in `\link[plyr]{alply}`. Default `"none"`.
-#' @param return_pv Logical; if `TRUE`, perform a quasi‐likelihood ratio test per segment to return p‐values for each term in `formula`.
-#'   Otherwise, return fitted `\link[stats]{glm}` objects. Default `FALSE`.
-#' @param overdisp Logical; if `TRUE`, account for overdispersion when computing test statistics. Default `TRUE`.
-#' @param disp_param Optional numeric vector of length `nrow(pbas)` providing dispersion parameters per segment.
-#'   If `NULL`, dispersion is estimated from each model’s residuals.
+#' @param prefix Character; file path prefix for the Matrix Market data.
+#'   If `prefix.mtx` or `prefix.mtx.gz` exists, reads it via `Matrix::readMM()`.
+#'   Row names are read from `prefix_key1.csv(.gz)`, column names from `prefix_key2.csv(.gz)`.
 #'
-#' @return If `return_pv = FALSE`, a named list of length `nrow(pbas)` of fitted `glm` objects
-#'   (or `NA` for segments where fitting failed). Names correspond to `rownames(pbas)`.
-#'   If `return_pv = TRUE`, a data.frame with one row per segment, columns:
-#'   \describe{
-#'     \item{overdispersion}{Estimated dispersion (or provided `disp_param`).}
-#'     \item{<term>}{Likelihood‐ratio p‐value for each term in `formula`.}
-#'   }
-#'   Row names correspond to `rownames(pbas)`.
+#' @return A sparse matrix (`dgCMatrix`) with row names set to feature IDs (from key1) and
+#'   column names set to barcodes (from key2). If no `.mtx` file is found, returns `NULL`.
 #'
-#' @details
-#' The function loops over each segment, constructs a two‐column matrix `cbind(i, e)`, adds pseudocounts if requested, and fits a quasi‐binomial `\link[stats]{glm}`.
-#' If `return_pv = TRUE`, it calls `\link{qbinom_lrt}` to compute a likelihood‐ratio test for each term in `formula`.
-#' Any errors or warnings during fitting are caught; segments with fitting errors return `NA`.
+#' @examples
+#' \dontrun{
+#' # Suppose files "data/counts.mtx" and "data/counts_key1.csv", "data/counts_key2.csv" exist:
+#' mat <- read_named_mm("data/counts")
+#' dim(mat)
+#' head(rownames(mat))
+#' head(colnames(mat))
+#' }
 #'
-#' @seealso `\link{qbinom_lrt}`, `\link[stats]{glm}`, `\link[plyr]{alply}`
+#' @seealso \code{\link[Matrix]{readMM}}, \code{\link{load_introns_as_se}}
 #' @export
-fit_as_glm <- function(
-    pbas,
-    formula,
-    data_terms,
-    pseudocount = 0,
-    parallel = FALSE,
-    progress = "none",
-    return_pv = FALSE,
-    overdisp = TRUE,
-    disp_param = NULL) {
-  # Extract term names from the formula
-  term_labels <- attr(stats::terms(formula), "term.labels")
-
-  # For each segment (row), fit a quasi-binomial GLM
-  results_list <- plyr::alply(
-    .data = seq_len(nrow(pbas)),
-    .margins = 1,
-    .fun = function(i) {
-      # 1. Build the i/e matrix and add pseudocounts if specified
-      inc_vec <- SummarizedExperiment::assay(pbas, "i")[i, ]
-      exc_vec <- SummarizedExperiment::assay(pbas, "e")[i, ]
-      tot <- inc_vec + exc_vec
-
-      # Add pseudocount proportional to total counts for each sample
-      if (pseudocount > 0) {
-        adj <- tot * pseudocount
-        inc_vec <- inc_vec + adj
-        exc_vec <- exc_vec + adj
-      }
-
-      # Place adjusted counts into the data frame used by glm()
-      #    'x' must be a two-column matrix: cbind(i, e)
-      data_terms$x <- cbind(inc_vec, exc_vec)
-
-      # 2. Fit the quasi-binomial GLM
-      fit <- tryCatch(
-        stats::glm(formula, data = data_terms, family = "quasibinomial"),
-        error = function(e) {
-          warning(paste0("Segment ", rownames(pbas)[i], ": ", e$message))
-          return(NA)
-        },
-        warning = function(w) {
-          warning(paste0("Segment ", rownames(pbas)[i], ": ", w$message))
-          return(NA)
-        }
-      )
-
-      # 3. If return_pv and fit succeeded, compute p-values via LRT
-      if (return_pv && !is.na(fit)[1]) {
-        fit <- qbinom_lrt(
-          fit,
-          overdisp = overdisp,
-          disp_param = disp_param[i],
-          term_labels = term_labels,
-          seg_id = rownames(pbas)[i]
-        )
-      }
-
-      fit
-    },
-    .parallel = parallel,
-    .progress = progress
-  )
-
-  # If return_pv, combine p-value results into a data.frame
-  if (return_pv) {
-    pv_df <- do.call(rbind, results_list)
-    rownames(pv_df) <- rownames(pbas)
-    colnames(pv_df) <- c("overdispersion", term_labels)
-    return(pv_df)
-  }
-
-  # Otherwise, return a named list of glm objects (or NA)
-  names(results_list) <- rownames(pbas)
-  attr(results_list, "term.labels") <- term_labels
-  return(results_list)
-}
-
-
-#' Quasi‐likelihood ratio test (Chi-square ANOVA) for a fitted quasi‐binomial GLM
-#'
-#' Given a fitted `glm(..., family = "quasibinomial")`, this function computes a likelihood‐ratio test for each term in the model, accounting for overdispersion.
-#'
-#' @param fit_obj A fitted `glm` object (quasi‐binomial family).
-#' @param overdisp Logical; if `TRUE`, use estimated dispersion from `fit_obj` (or `disp_param`) when computing test statistics.
-#'   If `FALSE`, force dispersion = 1 (i.e., treat as simple binomial).
-#' @param disp_param Optional numeric; if provided, use this as the dispersion parameter for the test.
-#'   Otherwise, estimate dispersion from `fit_obj`’s residuals.
-#' @param term_labels Character vector of term names (excluding the intercept) in the original formula, in the same order returned by `attr(terms(formula), "term.labels")`.
-#' @param seg_id Character; segment identifier (row name) used in warning messages.
-#'
-#' @return A numeric vector of length `length(term_labels) + 1`.
-#'   The first element is the dispersion estimate actually used (either `disp_param` or `summary(fit_obj)$dispersion`),
-#'    and the remaining elements are p‐values (Chisq tests) for each term in `term_labels`, in the same order.
-#'   If `fit_obj` is `NA` (fitting failed), returns a vector of `NA`s of appropriate length.
-#'
-#' @details
-#' 1. If `disp_param` is `NULL`, we take `summary(fit_obj)$dispersion` as the overdispersion estimate.
-#'    If the model has zero residual degrees of freedom, dispersion cannot be estimated; in that case, we return `NA` for dispersion and issue a warning (unless `overdisp = FALSE`).
-#' 2. We set `disp_used = max(1, <disp_estimate>)` so that the effective dispersion is at least 1. If `overdisp = FALSE`, we force `disp_used = 1`.
-#' 3. We then call `\link[stats]{anova}(fit_obj, test = "Chisq", dispersion = disp_used)`.
-#'    The p‐values for each term appear in column 5 of the ANOVA table.
-#' 4. If any error occurs when computing the ANOVA, we return `rep(NA, length(term_labels) + 1)`.
-#'
-#' @seealso `\link{fit_as_glm}`, `\link[stats]{anova}`, `\link[stats]{glm}`
-#' @export
-qbinom_lrt <- function(
-    fit_obj,
-    overdisp = TRUE,
-    disp_param = NULL,
-    term_labels,
-    seg_id) {
-  # Number of output elements: 1 for dispersion, plus one per term
-  n_out <- length(term_labels) + 1
-  result <- rep(NA_real_, n_out)
-
-  # If fitting failed (NA), return all NAs
-  if (is.na(fit_obj)[1]) {
-    return(result)
-  }
-
-  # Determine dispersion estimate
-  if (is.null(disp_param)) {
-    disp_est <- summary(fit_obj)$dispersion
-    # If no residual DF, cannot estimate dispersion
-    if (fit_obj$df.residual == 0) {
-      disp_est <- NA_real_
-      if (overdisp) {
-        warning(paste0(
-          "Segment ", seg_id,
-          ": cannot estimate overdispersion without replicates; returning NA"
-        ))
-      }
-    }
+read_named_mm <- function(prefix) {
+  # Check for .mtx file (uncompressed or gzipped)
+  mtx_path <- if (file.exists(paste0(prefix, ".mtx"))) {
+    paste0(prefix, ".mtx")
+  } else if (file.exists(paste0(prefix, ".mtx.gz"))) {
+    paste0(prefix, ".mtx.gz")
   } else {
-    disp_est <- disp_param
+    return(NULL)
   }
 
-  # Use at least 1 for dispersion; if overdisp = FALSE, force 1
-  disp_used <- max(1, disp_est, na.rm = TRUE)
-  if (!overdisp) {
-    disp_used <- 1
-  }
-  result[1] <- disp_used
+  # Read the sparse matrix
+  mat <- Matrix::readMM(mtx_path)
 
-  # Run ANOVA (Chisq) with specified dispersion; catch errors
-  a_tbl <- tryCatch(
-    stats::anova(fit_obj, test = "Chisq", dispersion = disp_used),
-    error = function(e) {
-      warning(paste0(
-        "Segment ", seg_id,
-        ": ANOVA Chi-square test failed: ", e$message
-      ))
-      return(NULL)
-    }
-  )
-  if (is.null(a_tbl)) {
-    return(result)
+  # Read row names from prefix_key1.csv or .gz
+  key1_path <- if (file.exists(paste0(prefix, "_key1.csv"))) {
+    paste0(prefix, "_key1.csv")
+  } else if (file.exists(paste0(prefix, "_key1.csv.gz"))) {
+    paste0(prefix, "_key1.csv.gz")
+  } else {
+    stop("Row key file not found: ", prefix, "_key1.csv(.gz)")
   }
+  rownames(mat) <- readLines(key1_path)
 
-  # Extract p‐values for each term: they occupy rows 2:(1+length(term_labels)), column 5
-  # (anova table has rows: intercept, term1, term2, ..., Residuals)
-  pvals <- a_tbl[2:(1 + length(term_labels)), 5]
-  result[-1] <- pvals
-  return(result)
+  # Read column names from prefix_key2.csv or .gz
+  key2_path <- if (file.exists(paste0(prefix, "_key2.csv"))) {
+    paste0(prefix, "_key2.csv")
+  } else if (file.exists(paste0(prefix, "_key2.csv.gz"))) {
+    paste0(prefix, "_key2.csv.gz")
+  } else {
+    stop("Column key file not found: ", prefix, "_key2.csv(.gz)")
+  }
+  colnames(mat) <- readLines(key2_path)
+
+  mat
 }
 
+#' Load single-cell AS counts (inclusion/exclusion) as sparse matrices
+#'
+#' Given a set of segment IDs and a file prefix, this function reads inclusion (`.i.mtx`)
+#'  and exclusion (`.e.mtx`) counts via `read_named_mm()`,
+#'  then subsets to only the requested segments and ensures consistent columns between `i` and `e`.
+#'
+#' @param segs A data.frame or `SummarizedExperiment`` whose row names are the segment IDs
+#'   to load. Only those segment IDs will be returned in the output matrices.
+#' @param path Character; file prefix (without extension) for inclusion/exclusion data.
+#'   The function expects files:
+#'   - `paste0(path, ".i.mtx")` (or `.i.mtx.gz`) and accompanying keys
+#'     for inclusion counts, and
+#'   - `paste0(path, ".e.mtx")` (or `.e.mtx.gz`) and accompanying keys
+#'     for exclusion counts.
+#'   Uses `read_named_mm()`` to read each.
+#'
+#' @return A list with two sparse matrices of class `dgCMatrix`:
+#'   - `i`: inclusion counts (rows = `rownames(segs)`, columns as in the `.i` matrix),
+#'   - `e`: exclusion counts (rows = `rownames(segs)`, columns matching the inclusion matrix).
+#'
+#' @details
+#' 1. Calls `read_named_mm(paste0(path, ".e"))`` to load the exclusion count matrix.
+#' 2. Calls `read_named_mm(paste0(path, ".i"))`` to load the inclusion count matrix.
+#' 3. Subsets both matrices to only rows matching `rownames(segs)``.
+#' 4. Ensures that the inclusion matrix uses the same column ordering as the exclusion matrix.
+#' 5. Returns a list `list(e = e_sub, i = i_sub)``.
+#'
+#' @seealso \code{\link{read_named_mm}}, \code{\link{load_introns_as_se}}
+#' @export
+load_sc_as <- function(segs, path) {
+  # Read exclusion counts
+  e_mat <- read_named_mm(paste0(path, ".e"))
+  # Read inclusion counts
+  i_mat <- read_named_mm(paste0(path, ".i"))
+  # Subset to only requested segment IDs
+  seg_ids <- rownames(segs)
+  e_sub <- e_mat[seg_ids, , drop = FALSE]
+  # Align inclusion columns to exclusion
+  i_sub <- i_mat[seg_ids, colnames(e_sub), drop = FALSE]
+
+  list(e = e_sub, i = i_sub)
+}
+
+#' Load single-cell intron counts as a SummarizedExperiment
+#'
+#' Reads a Matrix Market file (and accompanying keys) to build a `SummarizedExperiment`
+#' where rows are intron segments and columns are cell barcodes.
+#' Uses `read_named_mm()` to load the counts matrix along with row and column names.
+#'
+#' @param path Character: file prefix for the Matrix Market data.
+#'   If `path.mtx` or `path.mtx.gz` exists, `read_named_mm(path)` is used to load the sparse matrix.
+#'
+#' @return A `SummarizedExperiment` with:
+#'   - An assay named `counts` (a sparse `dgCMatrix`) storing intron counts: rows = intron IDs, columns = barcodes.
+#'   - `rowRanges`: a `GRanges` built by parsing row names (intron IDs) of the form `chr:strand:start-end`.
+#'     It sets `seqnames = chr`, `ranges = IRanges(start, end)`, and `strand` as `"+"` or `"-"`.
+#'   - `colData`: a data.frame with one column `barcode` (the column names of the count matrix).
+#'   If no `.mtx` file is found, returns `NULL`.
+#'
+#' @seealso \code{\link{read_named_mm}}, \code{\link[Matrix]{readMM}}
+#' @export
+load_introns_as_se <- function(path) {
+  # 1. Use read_named_mm() to load the sparse matrix with row/column names
+  counts <- read_named_mm(path)
+  if (is.null(counts)) {
+    return(NULL)
+  }
+
+  # 2. Extract feature IDs and barcodes from the matrix
+  feature_ids <- rownames(counts)
+  barcodes <- colnames(counts)
+
+  # 3. Parse feature IDs of the form "chr:strand:start-end"
+  parts <- strsplit(feature_ids, ":")
+  chr <- vapply(parts, `[`, character(1), 1)
+  strand_code <- vapply(parts, `[`, character(1), 2)
+  coords <- vapply(parts, `[`, character(1), 3)
+  coord_split <- strsplit(coords, "-")
+  start <- as.integer(vapply(coord_split, `[`, character(1), 1))
+  end <- as.integer(vapply(coord_split, `[`, character(1), 2))
+  strand <- ifelse(strand_code == "1", "+",
+    ifelse(strand_code == "-1", "-", "*")
+  )
+
+  # 4. Build GRanges for rowRanges
+  row_ranges <- GenomicRanges::GRanges(
+    seqnames = chr,
+    ranges = IRanges::IRanges(start = start, end = end),
+    strand = strand,
+    feature_id = feature_ids
+  )
+
+  # 5. Construct SummarizedExperiment
+  se <- SummarizedExperiment::SummarizedExperiment(
+    assays    = list(counts = counts),
+    rowRanges = row_ranges,
+    colData   = data.frame(barcode = barcodes, row.names = barcodes)
+  )
+
+  se
+}
+
+#' Bind a list of sparse matrices by rows, aligning columns
+#'
+#' Given a list of matrices (possibly sparse), this function ensures that each matrix hasthe same set of column names
+#' by inserting zero‐filled sparse columns where needed, then row‐binds them into a single sparse matrix.
+#'
+#' @param mat_list A list of matrices or sparse matrices.
+#'   Each should have identical row names but may differ in column names.
+#' @param colnames_union Optional character vector of column names to enforce across all matrices.
+#'   If `NULL`, defaults to the union of all column names in `mat_list`.
+#'
+#' @return A single sparse matrix (class `dgCMatrix`) obtained by row‐binding all matrices in
+#'   `mat_list`, with columns matching `colnames_union`. Missing columns in a given matrix
+#'   are filled with zero‐filled sparse columns.
+#'
+#' @examples
+#' \dontrun{
+#' library(Matrix)
+#' mat1 <- sparseMatrix(
+#'   i = c(1, 2), j = c(1, 2), x = c(1, 2),
+#'   dims = c(2, 3), dimnames = list(c("r1", "r2"), c("A", "B", "C"))
+#' )
+#' mat2 <- sparseMatrix(
+#'   i = c(1, 2), j = c(2, 3), x = c(3, 4),
+#'   dims = c(2, 3), dimnames = list(c("r1", "r2"), c("B", "C", "D"))
+#' )
+#' combined <- rbind_matrix(list(mat1, mat2))
+#' # Result has columns A, B, C, D, with zeros filled sparsely
+#' }
+#'
+#' @export
+rbind_matrix <- function(mat_list, colnames_union = NULL) {
+  # Determine union of column names if not provided
+  if (is.null(colnames_union)) {
+    colnames_union <- unique(unlist(lapply(mat_list, colnames)))
+  }
+
+  # Adjust each matrix to have all columns, filling missing with sparse zeros
+  adjusted_list <- lapply(mat_list, function(mat) {
+    # Coerce to sparse dgCMatrix if not already
+    if (!inherits(mat, "dgCMatrix")) {
+      mat <- Matrix::Matrix(as.matrix(mat), sparse = TRUE)
+    }
+    missing_cols <- setdiff(colnames_union, colnames(mat))
+    if (length(missing_cols) > 0) {
+      zero_mat <- Matrix::Matrix(
+        0,
+        nrow = nrow(mat),
+        ncol = length(missing_cols),
+        sparse = TRUE,
+        dimnames = list(rownames(mat), missing_cols)
+      )
+      mat <- cbind(mat, zero_mat)
+    }
+    # Reorder columns to match colnames_union
+    mat[, colnames_union, drop = FALSE]
+  })
+
+  # Row-bind all adjusted sparse matrices; result remains sparse
+  do.call(rbind, adjusted_list)
+}
+
+#' Construct a SummarizedExperiment from raw segment data and metadata
+#'
+#' Given a list containing segment coordinate data (`seg`) and assay matrices (`i`, `e`, etc.),
+#'  this function builds a `SummarizedExperiment` by:
+#' 1. Extracting `seg` (a data.frame of segment attributes) and using its columns to create
+#'    `rowRanges` (`GRanges`) with genomic coordinates and metadata.
+#' 2. Taking the remaining list elements as assays (each must be a matrix with rows matching `rownames(seg)`).
+#' 3. Incorporating provided column metadata `col_data` as `colData`.
+#'
+#' @param data_list A list with at least one element named `seg`, where:
+#'   - `data_list$seg` is a data.frame with columns:
+#'     - `chr_id` (chromosome names matching those in the assays’ row names),
+#'     - `start` (numeric start coordinate),
+#'     - `stop` (numeric end coordinate),
+#'     - `strand` (numeric code: `1` for '+', `-1` for '-', or `NA`/other for '*'),
+#'     - plus any additional per‐segment metadata columns.
+#'   - All other list elements are assay matrices (e.g., `i`, `e`, `counts`) whose row names
+#'     match `rownames(data_list$seg)` and whose column names match `rownames(col_data)`.
+#' @param col_data A data.frame of column‐level metadata, where each row corresponds to a column
+#'   of the resulting `SummarizedExperiment`. Row names of `col_data` must match the column names
+#'   of each assay matrix provided in `data_list`.
+#'
+#' @return A `SummarizedExperiment` with:
+#' -  `assays`: each list element of `data_list` (except `seg`) becomes an assay, with its matrix data.
+#' -  `rowRanges`: a `GRanges` object constructed from `data_list$seg`, with ranges given by
+#'     `chr_id`, `start`, `stop`, `strand` (converted to `'+'`, `'-'`, or `'*'`), and additional
+#'      metadata columns stored in `elementMetadata(rowRanges)`.
+#' -  `colData`: set to the provided `col_data`.
+#'
+#' @examples
+#' \dontrun{
+#' # Example 'raw_list' structure:
+#' raw_list <- list(
+#'   seg = data.frame(
+#'     chr_id = c("chr1", "chr1"),
+#'     start = c(100000, 200000),
+#'     stop = c(100100, 200100),
+#'     strand = c(1, -1),
+#'     gene_id = c("GENE1", "GENE2"),
+#'     row.names = c("SEG1", "SEG2"),
+#'     stringsAsFactors = FALSE
+#'   ),
+#'   i = matrix(1:4, nrow = 2, dimnames = list(c("SEG1", "SEG2"), c("S1", "S2"))),
+#'   e = matrix(5:8, nrow = 2, dimnames = list(c("SEG1", "SEG2"), c("S1", "S2")))
+#' )
+#' col_metadata <- data.frame(
+#'   sample_id = c("S1", "S2"),
+#'   celltype = c("A", "B"),
+#'   row.names = c("S1", "S2"),
+#'   stringsAsFactors = FALSE
+#' )
+#'
+#' se_obj <- make_summarized_experiment(raw_list, col_metadata)
+#' }
+#'
+#' @seealso \code{\link[GenomicRanges]{GRanges}}, \code{\link[SummarizedExperiment]{SummarizedExperiment}}
+#' @export
+make_summarized_experiment <- function(data_list, col_data) {
+  # 1. Extract segment data.frame and remove from list
+  seg_df <- data_list$seg
+  data_list$seg <- NULL
+
+  # 2. Build GRanges from seg_df
+  # Convert numeric strand codes to +, -, or *
+  strand_vec <- ifelse(
+    is.na(seg_df$strand),
+    "*",
+    ifelse(seg_df$strand == 1, "+",
+      ifelse(seg_df$strand == -1, "-", "*")
+    )
+  )
+  # Create GRanges; feature_id slot holds the row names of seg_df
+  row_ranges <- GenomicRanges::GRanges(
+    seqnames = seg_df$chr_id,
+    ranges = IRanges::IRanges(start = seg_df$start, end = seg_df$stop),
+    strand = strand_vec,
+    feature_id = rownames(seg_df)
+  )
+
+  # 3. Remove coordinate columns from seg_df, leaving only per‐segment metadata
+  meta_cols <- seg_df
+  meta_cols$chr_id <- NULL
+  meta_cols$start <- NULL
+  meta_cols$stop <- NULL
+  meta_cols$strand <- NULL
+
+  # Attach remaining columns as elementMetadata on row_ranges
+  S4Vectors::elementMetadata(row_ranges)[names(meta_cols)] <- meta_cols
+
+  # 4. The remaining items in data_list are assays; ensure each is a matrix
+  assay_list <- data_list
+  #   (Assume user provided correct matrix dimensions and row names match seg_df)
+
+  # 5. Construct and return SummarizedExperiment
+  se_obj <- SummarizedExperiment::SummarizedExperiment(
+    assays    = assay_list,
+    rowRanges = row_ranges,
+    colData   = col_data
+  )
+
+  se_obj
+}
+
+
+###### postprocess.R ######
+
+#' Read an RDS file if it exists, otherwise return NULL
+#'
+#' Attempts to read an RDS file from a given path. If the file does not exist,
+#' returns `NULL` without error.
+#'
+#' @param f Character; file path to the `.rds` file.
+#'
+#' @return The object returned by `readRDS(f)` if `file.exists(f) == TRUE`; otherwise `NULL`.
+#'
+#' @examples
+#' \dontrun{
+#' data_obj <- read_rds_if_exists("output/data.rds")
+#' if (is.null(data_obj)) {
+#'   message("No cached RDS found.")
+#' }
+#' }
+#'
+#' @export
+read_rds_if_exists <- function(f) {
+  if (file.exists(f)) {
+    return(readRDS(f))
+  }
+  NULL
+}
 
 #' Determine grouping factor from a data.frame or SummarizedExperiment
 #'
@@ -329,22 +503,18 @@ qbinom_lrt <- function(
 #' Otherwise, if `groupby` is a character scalar or vector of column names present in the input,
 #'  those columns are pasted together row-wise (for a `data.frame`) or via `interaction()` (for factor columns in`SummarizedExperiment::colData()`) to form a single grouping factor.
 #'
-#' @param x Either a `SummarizedExperiment` (in which case its `colData()` is used) or a `data.frame` whose rows correspond to samples/pseudobulks.
+#' @param x Either
+#'   - SummarizedExperiment (in which case its `colData()` is used) or
+#'   - data.frame whose rows correspond to samples/pseudobulks.
 #' @param groupby Either:
-#'   \itemize{
-#'     \item A vector of length `nrow(x)` or `ncol(x)` (for `SummarizedExperiment`):: treated as the grouping factor directly.
-#'     \item A character scalar or vector of column names in `x` (or in `colData(x)` if `x` is a `SummarizedExperiment`):
+#'   - Vector of length `nrow(x)` or `ncol(x)` (for `SummarizedExperiment`): treated as the grouping factor directly.
+#'   - Character scalar or vector of column names in `x` (or in `colData(x)` if `x` is a `SummarizedExperiment`):
 #'            those columns are concatenated row-wise (using `paste()` or `interaction()`) to form a grouping factor.
-#'   }
-#' @param sep Character string used to separate pasted values when `groupby` is multiple column names. Default is `"\$"`.
+#' @param sep Character: char used to separate pasted values when `groupby` is multiple column names. Default is `"$"`.
 #'
-#' @return A character vector (or factor) of length `nrow(x)`, representing the grouping factor.
+#' @return Character vector (or factor) of length `nrow(x)`, representing the grouping factor.
 #'   If `groupby` was already the same length as `nrow(x)`, it is returned unchanged.
 #'   Otherwise, it pastes together columns of `x`.
-#'
-#' @return A vector (typically a factor or character vector) of length equal to `nrow(x)` (for `data.frame`) or `ncol(x)` (for `SummarizedExperiment`), representing the grouping factor.
-#'         If `groupby` was already the correct length, it is returned unchanged.
-#'         Otherwise, it pastes or interacts specified columns of `x`.
 #'
 #' @examples
 #' df <- data.frame(
@@ -370,7 +540,7 @@ qbinom_lrt <- function(
 #' print(grp2)
 #' print(grp3)
 #'
-#' @seealso `\link{filter_segments_and_samples}`, `\link{test_all_groups_as}`
+#' @seealso \code{\link{filter_segments_and_samples}}, \code{link{test_all_groups_as}}
 #' @export
 get_groupby_factor <- function(x, groupby, sep = "$") {
   # Determine whether x is a SummarizedExperiment or a data.frame
@@ -428,42 +598,511 @@ get_groupby_factor <- function(x, groupby, sep = "$") {
   )
 }
 
+#' Quasi‐likelihood ratio test (Chi-square ANOVA) for a fitted quasi‐binomial GLM
+#'
+#' Given a fitted `glm(..., family = "quasibinomial")`, this function computes a likelihood‐ratio test for each term in the model, accounting for overdispersion.
+#'
+#' @param fit_obj A fitted `glm` object (quasi‐binomial family).
+#' @param overdisp Logical: if `TRUE`, use estimated dispersion from `fit_obj` (or `disp_param`) when computing test statistics.
+#'   If `FALSE`, force dispersion = 1 (i.e., treat as simple binomial).
+#' @param disp_param Optional numeric: if provided, use this as the dispersion parameter for the test.
+#'   Otherwise, estimate dispersion from `fit_obj`’s residuals.
+#' @param term_labels Character vector: term names (excluding the intercept) in the original formula, in the same order returned by `attr(terms(formula), "term.labels")`.
+#' @param seg_id Character: segment identifier (row name) used in warning messages.
+#'
+#' @return Numeric vector of length `length(term_labels) + 1`.
+#'   The first element is the dispersion estimate actually used (either `disp_param` or `summary(fit_obj)$dispersion`),
+#'   and the remaining elements are p‐values (Chisq tests) for each term in `term_labels`, in the same order.
+#'   If `fit_obj` is `NA` (fitting failed), returns a vector of `NA`s of appropriate length.
+#'
+#' @details
+#' 1. If `disp_param` is `NULL`, takes `summary(fit_obj)$dispersion` as the overdispersion estimate.
+#'    If the model has zero residual degrees of freedom, dispersion cannot be estimated; in that case, return `NA` for dispersion and issue a warning (unless `overdisp = FALSE`).
+#' 2. Set `disp_used = max(1, <disp_estimate>)` so that the effective dispersion is at least 1. If `overdisp = FALSE`, we force `disp_used = 1`.
+#' 3. Call \link[stats]{anova}(fit_obj, test = "Chisq", dispersion = disp_used)`.
+#'    The p‐values for each term appear in column 5 of the ANOVA table.
+#' 4. If any error occurs when computing the ANOVA, return `rep(NA, length(term_labels) + 1)`.
+#'
+#' @seealso \code{\link{fit_as_glm}}, \code{\link[stats]{anova}}, \code{\link[stats]{glm}}
+#' @export
+qbinom_lrt <- function(
+    fit_obj,
+    overdisp = TRUE,
+    disp_param = NULL,
+    term_labels,
+    seg_id) {
+  # Number of output elements: 1 for dispersion, plus one per term
+  n_out <- length(term_labels) + 1
+  result <- rep(NA_real_, n_out)
+
+  # If fitting failed (NA), return all NAs
+  if (is.na(fit_obj)[1]) {
+    return(result)
+  }
+
+  # Determine dispersion estimate
+  if (is.null(disp_param)) {
+    disp_est <- summary(fit_obj)$dispersion
+    # If no residual DF, cannot estimate dispersion
+    if (fit_obj$df.residual == 0) {
+      disp_est <- NA_real_
+      if (overdisp) {
+        warning(paste0(
+          "Segment ", seg_id,
+          ": cannot estimate overdispersion without replicates; returning NA"
+        ))
+      }
+    }
+  } else {
+    disp_est <- disp_param
+  }
+
+  # Use at least 1 for dispersion; if overdisp = FALSE, force 1
+  disp_used <- max(1, disp_est, na.rm = TRUE)
+  if (!overdisp) {
+    disp_used <- 1
+  }
+  result[1] <- disp_used
+
+  # Run ANOVA (Chisq) with specified dispersion; catch errors
+  a_tbl <- tryCatch(
+    stats::anova(fit_obj, test = "Chisq", dispersion = disp_used),
+    error = function(e) {
+      warning(paste0(
+        "Segment ", seg_id,
+        ": ANOVA Chi-square test failed: ", e$message
+      ))
+      NULL
+    }
+  )
+  if (is.null(a_tbl)) {
+    return(result)
+  }
+
+  # Extract p‐values for each term: they occupy rows 2:(1+length(term_labels)), column 5
+  # (anova table has rows: intercept, term1, term2, ..., Residuals)
+  pvals <- a_tbl[2:(1 + length(term_labels)), 5]
+  result[-1] <- pvals
+  return(result)
+}
+
+#' Fit a quasi‐binomial GLM for alternative splicing per segment
+#'
+#' For each segment (row) in a `SummarizedExperiment` with assays `i` (inclusion counts) and `e` (exclusion counts),
+#' this function fits a quasi‐binomial generalized linear model of the form `i / (i + e) ~ predictors`,
+#' adding a pseudocount if desired. It can optionally return p‐values via a likelihood‐ratio test.
+#'
+#' @param pbas SummarizedExperiment: each row is a segment and each column is a pseudobulk.
+#'   Must contain assays named `i` (inclusion) and `e` (exclusion).
+#'   Rows correspond to segments; columns correspond to samples/pseudobulks.
+#' @param formula \code{\link[stats]{formula}}: specifies the model, (e.g. `i ~ group`).
+#'   Internally, the function treats `i` and `e` as a two‐column response.
+#' @param data_terms Named list: covariates data.frame columns referenced in `formula`.
+#'   For example, if `formula = i ~ group`, then `data_terms = list(group = group_factor)` where `group_factor` is a vector of length `ncol(pbas)`.
+#' @param pseudocount Numeric: of each count total to add to both `i` and `e`, expressed as a fraction of the total counts. Default 0 (no pseudocount).
+#' @param parallel Logical: if `TRUE`, uses `\code{\link[plyr]{alply}}(…, .parallel = TRUE)` to fit models in parallel (requires registered backend). Default `FALSE`.
+#' @param progress Character: passed to `.progress` in \code{\link[plyr]{alply}}. Default `"none"`.
+#' @param return_pv Logical: if `TRUE`, perform a quasi‐likelihood ratio test per segment to return p‐values for each term in `formula`.
+#'   Otherwise, return fitted `\link[stats]{glm}` objects. Default `FALSE`.
+#' @param overdisp Logical: if `TRUE`, account for overdispersion when computing test statistics. Default `TRUE`.
+#' @param disp_param Numeric vector of length `nrow(pbas): provides dispersion parameters per segment.
+#'   If `NULL`, dispersion is estimated from each model’s residuals.
+#'
+#' @return
+#'   - If `return_pv = FALSE`, a named list of length `nrow(pbas)` of fitted `glm` objects
+#'   (or `NA` for segments where fitting failed). Names correspond to `rownames(pbas)`.
+#'   - If `return_pv = TRUE`, a data.frame with one row per segment, columns:
+#'     - overdispersion: Estimated dispersion (or provided `disp_param`)
+#'     - term: Likelihood‐ratio p‐value for each term in `formula`
+#'   Row names correspond to `rownames(pbas)`.
+#'
+#' @details
+#' The function loops over each segment, constructs a two‐column matrix `cbind(i, e)`, adds pseudocounts if requested, and fits a quasi‐binomial `\link[stats]{glm}`.
+#' If `return_pv = TRUE`, it calls \code{\link{qbinom_lrt}} to compute a likelihood‐ratio test for each term in `formula`.
+#' Any errors or warnings during fitting are caught; segments with fitting errors return `NA`.
+#'
+#' @seealso \code{\link{qbinom_lrt}}, \code{\link[stats]{glm}}, \code{\link[plyr]{alply}}
+#' @export
+fit_as_glm <- function(
+    pbas,
+    formula,
+    data_terms,
+    pseudocount = 0,
+    parallel = FALSE,
+    progress = "none",
+    return_pv = FALSE,
+    overdisp = TRUE,
+    disp_param = NULL) {
+  # Extract term names from the formula
+  term_labels <- attr(stats::terms(formula), "term.labels")
+
+  # For each segment (row), fit a quasi-binomial GLM
+  results_list <- plyr::alply(
+    .data = seq_len(nrow(pbas)),
+    .margins = 1,
+    .fun = function(i) {
+      # 1. Build the i/e matrix and add pseudocounts if specified
+      inc_vec <- SummarizedExperiment::assay(pbas, "i")[i, ]
+      exc_vec <- SummarizedExperiment::assay(pbas, "e")[i, ]
+      tot <- inc_vec + exc_vec
+
+      # Add pseudocount proportional to total counts for each sample
+      if (pseudocount > 0) {
+        adj <- tot * pseudocount
+        inc_vec <- inc_vec + adj
+        exc_vec <- exc_vec + adj
+      }
+
+      # Place adjusted counts into the data frame used by glm()
+      #    'x' must be a two-column matrix: cbind(i, e)
+      data_terms$x <- cbind(inc_vec, exc_vec)
+
+      # 2. Fit the quasi-binomial GLM
+      fit <- tryCatch(
+        stats::glm(formula, data = data_terms, family = "quasibinomial"),
+        error = function(e) {
+          warning(paste0("Segment ", rownames(pbas)[i], ": ", e$message))
+          NA
+        },
+        warning = function(w) {
+          warning(paste0("Segment ", rownames(pbas)[i], ": ", w$message))
+          NA
+        }
+      )
+
+      # 3. If return_pv and fit succeeded, compute p-values via LRT
+      if (return_pv && !is.na(fit)[1]) {
+        fit <- qbinom_lrt(
+          fit,
+          overdisp = overdisp,
+          disp_param = disp_param[i],
+          term_labels = term_labels,
+          seg_id = rownames(pbas)[i]
+        )
+      }
+
+      fit
+    },
+    .parallel = parallel,
+    .progress = progress
+  )
+
+  # If return_pv, combine p-value results into a data.frame
+  if (return_pv) {
+    pv_df <- do.call(rbind, results_list)
+    rownames(pv_df) <- rownames(pbas)
+    colnames(pv_df) <- c("overdispersion", term_labels)
+    return(pv_df)
+  }
+
+  # Otherwise, return a named list of glm objects (or NA)
+  names(results_list) <- rownames(pbas)
+  attr(results_list, "term.labels") <- term_labels
+  return(results_list)
+}
+
+#' Aggregate column‐level metadata for pseudobulk groups
+#'
+#' Given a data.frame of per‐cell metadata and a grouping vector, this function aggregates metadata so that each row corresponds to one group.
+#' For each group:
+#'   1. Columns that are constant within the group are retained.
+#'   2. For any column listed in `aggregate`, a summary function is applied (e.g., sum).
+#'
+#' @param meta A data.frame whose rows correspond to individual cells or samples,
+#'   and whose columns contain metadata (e.g., `sample_id`, `celltype`, `ncells`, etc.).
+#'   Row names should match column names of the corresponding `SummarizedExperiment` if applicable.
+#' @param groupby Either:
+#'   - Vector of length `nrow(x)` or `ncol(x)` (for `SummarizedExperiment`): treated as the grouping factor directly.
+#'   - Character scalar or vector of column names in `x` (or in `colData(x)` if `x` is a `SummarizedExperiment`):
+#'            those columns are concatenated row-wise (using `paste()` or `interaction()`) to form a grouping factor.
+#'   See \code{\link{get_groupby_factor}} for details.
+#' @param aggregate A named list of functions to apply to each column within each group.
+#'   For example, `list(ncells = sum, ngenes = max)` would sum the `ncells` column and take
+#'   the maximum of the `ngenes` column for each group. Default is `list(ncells = sum)`.
+#'
+#' @return A data.frame with one row per unique group. Columns include:
+#'   - Any original columns in `meta` that had the same (constant) value for all rows in that group.
+#'   - For each name in `aggregate`, a new column where the corresponding function has been applied
+#'     to that column’s values within each group.
+#'   Row names of the returned data.frame are the group labels.
+#'
+#' @examples
+#' \dontrun{
+#' # Suppose 'cell_meta' is a data.frame of 1000 cells with columns:
+#' #   sample_id, celltype, ncells, batch, library_size
+#' # We want to pseudobulk by 'celltype', summing 'ncells' and taking max 'library_size':
+#' group_meta <- pseudobulk_metadata(
+#'   meta = cell_meta,
+#'   groupby = "celltype",
+#'   aggregate = list(ncells = sum, library_size = max)
+#' )
+#' # 'group_meta' now has one row per unique celltype.
+#' }
+#'
+#' @seealso \code{\link{pseudobulk}}, \code{\link{get_groupby_factor}}
+#' @export
+pseudobulk_metadata <- function(
+    meta,
+    groupby,
+    aggregate = list(ncells = sum)) {
+  # Construct grouping factor (length = nrow(meta))
+  group_factor <- get_groupby_factor(meta, groupby)
+
+  # Split metadata by group
+  meta_split <- split(meta, group_factor)
+
+  # For each group, retain constant columns and apply aggregation functions
+  aggregated_list <- lapply(meta_split, function(df_group) {
+    # Determine which columns are constant within this group
+    unique_counts <- sapply(df_group, function(col) length(unique(col)))
+    constant_cols <- names(unique_counts)[unique_counts == 1]
+
+    # Start result with unique values of constant columns
+    result <- unique(df_group[, constant_cols, drop = FALSE])
+
+    # Apply aggregation functions to specified columns
+    for (col_name in intersect(names(aggregate), colnames(df_group))) {
+      result[, col_name] <- aggregate[[col_name]](df_group[[col_name]])
+    }
+
+    result
+  })
+
+  # Determine common columns across all groups (intersection of column names)
+  common_cols <- Reduce(intersect, lapply(aggregated_list, colnames))
+
+  # Combine into a single data.frame, keeping only common columns
+  combined_meta <- do.call(rbind, lapply(aggregated_list, function(df) df[, common_cols, drop = FALSE]))
+
+  return(combined_meta)
+}
+
+#' Aggregate single-cell counts into pseudobulk per group
+#'
+#' Given a `SummarizedExperiment` of single-cell assays (e.g., inclusion/exclusion counts),
+#' this function sums counts within each group (as defined by `groupby`), removes specified derivative assays,
+#' and returns a new `SummarizedExperiment` where each column corresponds to a group-level pseudobulk.
+#'
+#' @param se `SummarizedExperiment`: rows are features (e.g., segments) and columns are individual cells or barcodes.
+#'           Assays include `i`, `e`, `counts`, etc.
+#' @param groupby Either:
+#'   - Vector of length `nrow(x)` or `ncol(x)` (for `SummarizedExperiment`): treated as the grouping factor directly.
+#'   - Character scalar or vector of column names in `x` (or in `colData(x)` if `x` is a `SummarizedExperiment`):
+#'            those columns are concatenated row-wise (using `paste()` or `interaction()`) to form a grouping factor.
+#'   See \code{\link{get_groupby_factor}} for details.
+#' @param clean_derivatives Character vector of assay names to remove before summation
+#'   (e.g., `c("psi", "cpm")`). Default `c("psi", "cpm")`.
+#'
+#' @return `SummarizedExperiment`:
+#'   - `Assays`: Each assay from `se`, except those in `clean_derivatives`, replaced by a matrix of summed values per group
+#'   - `rowRanges`: Copied from `rowRanges(se)`
+#'   - `colData`: A data.frame of group-level metadata: one row per group, including any columns from `colData(se)`
+#'                that are constant within each group, plus aggregated columns via `pseudobulk_metadata()`
+#'
+#' @details
+#' 1. Converts `groupby` into a grouping vector via \code{\link{get_groupby_factor}}.
+#' 2. Drops any assays listed in `clean_derivatives` from `se`.
+#' 3. For each remaining assay, uses \code{\link[visutils]{calcColSums}} to sum counts for columns that share the same
+#'    group label.
+#' 4. Builds a metadata data.frame by calling `pseudobulk_metadata(colData(se), groupby)`, which:
+#'    \enumerate{
+#'      \item Splits `colData(se)` into sub-data.frames by group.
+#'      \item For each group, retains columns that are constant across cells and applies aggregation functions
+#'            (e.g., sum of `ncells`) for specified columns.
+#'      \item Recombines group-level rows into a single data.frame, with row names matching group labels.
+#'    }
+#' 5. Constructs a new `SummarizedExperiment` with summed assay matrices, original `rowRanges(se)`, and
+#'    the aggregated `colData` (one row per group).
+#'
+#' @seealso \code{\link{get_groupby_factor}}, \code{\link{pseudobulk_metadata}}, \code{\link[visutils]{calcColSums}}
+#' @export
+pseudobulk <- function(
+    se,
+    groupby,
+    clean_derivatives = c("psi", "cpm")) {
+  # 1. Determine grouping labels for each column
+  group_factor <- get_groupby_factor(se, groupby)
+
+  # 2. Remove specified derivative assays before summing
+  to_remove <- intersect(SummarizedExperiment::assayNames(se), clean_derivatives)
+  if (length(to_remove) > 0) {
+    for (assay_name in to_remove) {
+      SummarizedExperiment::assay(se, assay_name) <- NULL
+    }
+  }
+
+  # 3. Sum each assay by group using visutils::calcColSums
+  summed_assays <- list()
+  for (assay_name in SummarizedExperiment::assayNames(se)) {
+    mat <- SummarizedExperiment::assay(se, assay_name)
+    summed_assays[[assay_name]] <- visutils::calcColSums(mat, group_factor)
+  }
+
+  # 4. Build group-level metadata
+  meta <- SummarizedExperiment::as.data.frame(SummarizedExperiment::colData(se))
+  group_meta <- pseudobulk_metadata(meta, group_factor)
+  # Reorder to match the order of columns in summed_assays (rownames of each summed matrix)
+  group_meta <- group_meta[colnames(summed_assays[[1]]), , drop = FALSE]
+
+  # 5. Construct new SummarizedExperiment
+  new_se <- SummarizedExperiment::SummarizedExperiment(
+    assays = summed_assays,
+    rowRanges = SummarizedExperiment::rowRanges(se),
+    colData = group_meta
+  )
+
+  new_se
+}
+
+#' Calculate percent spliced‐in (PSI) per segment
+#'
+#' Given a `SummarizedExperiment` containing inclusion (`i`) and exclusion (`e`) counts,
+#'  this function computes, for each segment and sample, the percent spliced‐in: `PSI = i / (i + e)`
+#' If the total counts (`i + e`) for a segment in a sample are below `min_cov`, that PSI is set to `NA`.
+#'
+#' @param se A `SummarizedExperiment` with assays named `i` (inclusion counts) and `e` (exclusion counts).
+#'   Rows are segments; columns are pseudobulk samples.
+#' @param min_cov Integer; minimum total junction coverage (`i + e`) required to compute a valid PSI.
+#'   For any `i + e < min_cov`, the PSI is set to `NA`. Default is `10`.
+#'
+#' @return A numeric matrix of dimensions `nrow(se)` × `ncol(se)` where each entry is the PSI value
+#'   for that segment and sample, or `NA` if coverage is insufficient.
+#'
+#' @examples
+#' \dontrun{
+#' # Assume 'pseudobulk_se' is a SummarizedExperiment with assays 'i' and 'e':
+#' psi_mat <- calc_psi(pseudobulk_se, min_cov = 10)
+#' head(psi_mat)
+#' }
+#'
+#' @seealso \code{\link{pseudobulk}}, \code{\link{calc_cpm}}
+#' @export
+calc_psi <- function(se, min_cov = 10) {
+  # Verify that both 'i' and 'e' assays exist
+  if (!all(c("i", "e") %in% SummarizedExperiment::assayNames(se))) {
+    warning("Assays 'i' and/or 'e' not found in the SummarizedExperiment; returning NULL.")
+    NULL
+  }
+
+  # Extract inclusion and exclusion count matrices
+  inc_mat <- SummarizedExperiment::assay(se, "i")
+  exc_mat <- SummarizedExperiment::assay(se, "e")
+
+  # Compute total counts per segment × sample
+  total_mat <- inc_mat + exc_mat
+
+  # Initialize PSI matrix
+  psi_mat <- inc_mat / total_mat
+
+  # Where total < min_cov, set PSI to NA
+  psi_mat[total_mat < min_cov] <- NA_real_
+
+  return(as.matrix(psi_mat))
+}
+
+#' Compute delta‐PSI (difference in percent spliced‐in) per segment
+#'
+#' For a `SummarizedExperiment` of splicing segments, this function first pseudobulks the data by `groupby`,
+#'   computes PSI per segment (using `calc_psi()`), and then identifies for each segment
+#'   the group with lowest mean PSI (`low_state`),  the group with highest mean PSI (`high_state`), and their difference (`dpsi`).
+#'
+#' @param data A `SummarizedExperiment` where rows are segments and columns are single‐cell or pseudobulk samples.
+#'   Must contain assays `i` (inclusion) and `e` (exclusion) so that `calc_psi()` works after pseudobulking.
+#' @param groupby Either:
+#'   - A character vector of length `ncol(data)` giving a grouping label for each column, or
+#'   - One or more column names in `colData(data)`, whose values (pasted if multiple) define the grouping factor.
+#'   See `get_groupby_factor()` for details.
+#' @param min_cov Integer; minimum total junction coverage (`i + e`) per pseudobulk required to compute a valid PSI.
+#'                PSI values where `i + e < min_cov` are set to `NA`. Default is 50.
+#'
+#' @return A data.frame with one row per segment (rownames = `rownames(data)`), containing columns:
+#'   - `low_state`: group label with lowest mean PSI (or `NA` if fewer than two non‐NA values),
+#'   - `high_state`: group label with highest mean PSI,
+#'   - `dpsi`: numeric difference `PSI[high_state] - PSI[low_state]` (or `NA` if not computable).
+#'
+#' @details
+#' 1. The function calls `pseudobulk(data, groupby)`, which sums counts per group.
+#' 2. It then computes a PSI matrix via `calc_psi()` on the pseudobulk, obtaining one PSI value per segment × group.
+#' 3. For each segment (row of the PSI matrix):
+#'    - Extracts non‐`NA` PSI values, sorts them by ascending PSI.
+#'    - If at least two groups have non‐`NA` PSI, sets `low_state` to the name of the group with smallest PSI,
+#'      `high_state` to the group with largest PSI, and `dpsi = PSI[high_state] - PSI[low_state]`.
+#'    - Otherwise, leaves all three as `NA`.
+#'
+#' @seealso \code{\link{pseudobulk}}, \code{\link{calc_psi}}
+#' @export
+get_dpsi <- function(data, groupby, min_cov = 50) {
+  # 1. Pseudobulk by group
+  pb <- pseudobulk(data, groupby)
+
+  # 2. Compute PSI per segment × group
+  psi_mat <- calc_psi(pb, min_cov = min_cov)
+  # psi_mat is a matrix (n_segments × n_groups), possibly with NA
+
+  # 3. For each segment, find low_state, high_state, dpsi
+  result_list <- apply(psi_mat, 1, function(x) {
+    # x: numeric vector of PSI values for one segment across groups
+    non_na <- x[!is.na(x)]
+    if (length(non_na) < 2) {
+      return(data.frame(
+        low_state = NA_character_,
+        high_state = NA_character_,
+        dpsi = NA_real_
+      ))
+    }
+    # Sort by PSI
+    sorted_vals <- sort(non_na)
+    low_val <- sorted_vals[1]
+    high_val <- sorted_vals[length(sorted_vals)]
+    # Get group names corresponding to low_val and high_val
+    # 'names(non_na)' holds group labels
+    low_state <- names(non_na)[which(non_na == low_val)[1]]
+    high_state <- names(non_na)[which(non_na == high_val)[1]]
+    data.frame(
+      low_state = low_state,
+      high_state = high_state,
+      dpsi = high_val - low_val
+    )
+  })
+
+  # 4. Combine into a data.frame with rownames = segment IDs
+  result_df <- do.call(rbind, result_list)
+  rownames(result_df) <- rownames(data)
+  return(result_df)
+}
 
 #' Test alternative splicing across all groups simultaneously
 #'
-#' For a `SummarizedExperiment` of splicing segments with assays “i” (inclusion counts) and “e” (exclusion counts),
-#'  this function tests whether PSI differs across multiple groups (e.g., cell types) using a quasi‐binomial GLM.
+#' For a `SummarizedExperiment` of splicing segments with assays `i` (inclusion counts) and `e` (exclusion counts),
+#' this function tests whether PSI differs across multiple groups (e.g., cell types) using a quasi‐binomial GLM.
 #' It returns a data.frame of p‐values, adjusted FDR, and delta‐PSI for each segment.
 #'
-#' @param pbas A `SummarizedExperiment` where each row is a segment and each column is a pseudobulk.
-#'   Must contain assays named “i” (inclusion) and “e” (exclusion).
-#'   Rows correspond to segment IDs; columns correspond to samples/pseudobulks.
+#' @param pbas SummarizedExperiment: each row is a segment and each column is a pseudobulk.
+#'   Must contain assays named `i` (inclusion) and `e` (exclusion).
+#'   Rows correspond to segments; columns correspond to samples/pseudobulks.
 #' @param groupby Either:
-#'   \itemize{
-#'     \item A vector of length `ncol(pbas)` that directly gives a group label for each column, or
-#'     \item One or more column names in `colData(pbas)`, whose values (pasted together if multiple) define the grouping factor.
-#'   }
-#'   See `\link{get_groupby_factor}` for details.
+#'   - Vector of length `nrow(x)` or `ncol(x)` (for `SummarizedExperiment`): treated as the grouping factor directly.
+#'   - Character scalar or vector of column names in `x` (or in `colData(x)` if `x` is a `SummarizedExperiment`):
+#'            those columns are concatenated row-wise (using `paste()` or `interaction()`) to form a grouping factor.
+#'   See \code{\link{get_groupby_factor}} for details.
 #' @param parallel Logical; if `TRUE`, fit per‐segment GLMs in parallel (requires a registered `plyr` backend). Default `FALSE`.
 #'
-#' @return A data.frame with one row per segment (rownames = `rownames(pbas)` (segment IDs)), containing columns:
-#'   \describe{
-#'     \item{overdispersion}{Estimated dispersion from each segment’s GLM.}
-#'     \item{group}{Raw p‐value from the likelihood‐ratio test for the `group` term.}
-#'     \item{group_fdr}{Benjamini‐Hochberg adjusted FDR (across all segments).}
-#'     \item{low_state}{Group label with lowest mean PSI (from `get_dpsi()`).}
-#'     \item{high_state}{Group label with highest mean PSI.}
-#'     \item{dpsi}{Difference in mean PSI between `high_state` and `low_state`.}
-#'   }
+#' @return Data.frame with one row per segment (rownames = `rownames(pbas)` (segment IDs)), containing columns:
+#'   - overdispersion: Estimated dispersion from each segment’s GLM
+#'   - group: Raw p‐value from the likelihood‐ratio test for the `group` term
+#'   - group_fdr: Benjamini‐Hochberg adjusted FDR (across all segments)
+#'   - low_state: Group label with lowest mean PSI (from \code{\link{get_dpsi}})
+#'   - high_state: Group label with highest mean PSI
+#'   - dpsi: Difference in mean PSI between `high_state` and `low_state`
 #'
 #' @details
 #' 1. Converts `groupby` into a single grouping vector `group_factor` via `get_groupby_factor()`.
 #' 2. Calls `fit_as_glm()` with formula `x ~ group`, where `x` is the per‐segment `cbind(i,e)`.
 #' 3. Extracts raw p‐values for the `group` term, adjusts them (Benjamini-Hochberg) into `group_fdr`.
-#' 4. Computes delta‐PSI (`dpsi`), `low_state`, and `high_state` for each segment via `get_dpsi()`.
+#' 4. Computes delta‐PSI (`dpsi`), `low_state`, and `high_state` for each segment via \code{\link{get_dpsi}}.
 #' 5. Combine results (endure matching row order)
 #'
-#' @seealso `\link{fit_as_glm}`, `\link{get_groupby_factor}`, `\link{get_dpsi}`, `\link{test_pair_as}`
+#' @seealso \code{\link{fit_as_glm}}, \code{\link{get_groupby_factor}}, \code{\link{get_dpsi}}, \code{\link{test_pair_as}}
 #' @export
 test_all_groups_as <- function(
     pbas,
@@ -500,32 +1139,28 @@ test_all_groups_as <- function(
   return(res)
 }
 
-
 #' Test alternative splicing between two conditions (pairwise)
 #'
-#' For a `SummarizedExperiment` of splicing segments with assays “i” (inclusion counts) and “e” (exclusion counts),
-#'  this function tests for differential splicing between two specified groups (e.g., two cell types) using a quasi‐binomial GLM per segment.
+#' For a `SummarizedExperiment` of splicing segments with assays `i` (inclusion counts) and `e` (exclusion counts),
+#' this function tests for differential splicing between two specified groups (e.g., two cell types) using a quasi‐binomial GLM per segment.
 #' It returns a data.frame of p‐values, FDR, and delta‐PSI between the two conditions.
 #'
-#' @param pbas A `SummarizedExperiment` where each row is a segment and each column is a pseudobulk.
-#'   Must contain assays named “i” (inclusion) and “e” (exclusion).
+#' @param pbas SummarizedExperiment: each row is a segment and each column is a pseudobulk.
+#'   Must contain assays named `i` (inclusion) and `e` (exclusion).
 #'   Rows correspond to segments; columns correspond to samples/pseudobulks.
 #' @param groupby Either:
-#'   \itemize{
-#'     \item A vector of length `ncol(pbas)` that directly gives a group label for each column, or
-#'     \item One or more column names in `colData(pbas)`, whose values (pasted together if multiple) define the grouping factor.
-#'   }
-#'   See `\link{get_groupby_factor}` for details.
-#' @param conditions A length‐2 character vector specifying the two group labels to compare (e.g., `c("A", "B")`).
+#'   - Vector of length `nrow(x)` or `ncol(x)` (for `SummarizedExperiment`): treated as the grouping factor directly.
+#'   - Character scalar or vector of column names in `x` (or in `colData(x)` if `x` is a `SummarizedExperiment`):
+#'            those columns are concatenated row-wise (using `paste()` or `interaction()`) to form a grouping factor.
+#'   See \code{\link{get_groupby_factor}} for details.
+#' @param conditions Character vector (length: 2): specifies the two group labels to compare (e.g., `c("A", "B")`).
 #' @param parallel Logical; if `TRUE`, fit per‐segment GLMs in parallel (requires a registered `plyr` backend). Default `FALSE`.
 #'
 #' @return A data.frame with one row per segment (rownames = `rownames(pbas)`), containing columns:
-#'   \describe{
-#'     \item{overdispersion}{Estimated dispersion from each segment’s GLM.}
-#'     \item{pv}{Raw p‐value for the group term (two‐level factor).}
-#'     \item{fdr}{Benjamini-Hochberg FDR (across all segments).}
-#'     \item{dpsi}{Difference in mean PSI between `conditions[2]` and `conditions[1]`.}
-#'   }
+#'   - overdispersion: Estimated dispersion from each segment’s GLM
+#'   - pv: Raw p‐value for the group term (two‐level factor)
+#'   - fdr: Benjamini-Hochberg FDR (across all segments)
+#'   - dpsi: Difference in mean PSI between `conditions[2]` and `conditions[1]`
 #'
 #' @details
 #' 1. Converts `groupby` into a single grouping vector `group_factor` via `get_groupby_factor()`.
@@ -535,7 +1170,7 @@ test_all_groups_as <- function(
 #' 5. Computes delta‐PSI (`dpsi`) per segment by pseudobulking and calling `calc_psi()`, then taking
 #'    mean PSI per condition and subtracting.
 #'
-#' @seealso `\link{fit_as_glm}`, `\link{get_groupby_factor}`, \code{\link{calc_psi}}, \link{pseudobulk}, `\link{test_all_groups_as}`
+#' @seealso \code{\link{fit_as_glm}}, \code{\link{get_groupby_factor}}, \code{\link{calc_psi}}, \code{\link{pseudobulk}}, \code{\link{test_all_groups_as}}
 #' @export
 test_pair_as <- function(
     pbas,
@@ -586,7 +1221,6 @@ test_pair_as <- function(
   return(res)
 }
 
-
 #' Identify marker segments for each group via one‐vs‐rest tests
 #'
 #' For a `SummarizedExperiment` of splicing segments with assays “psi” (percent spliced‐in),
@@ -594,25 +1228,23 @@ test_pair_as <- function(
 #'  (i.e., comparing that group to all other samples).
 #' It returns p‐values and delta‐PSI matrices (segments × groups).
 #'
-#' @param pbas A `SummarizedExperiment` where each row is a segment and each column is a pseudobulk.
+#'
+#' @param pbas SummarizedExperiment: each row is a segment and each column is a pseudobulk.
 #'   Must contain assays “i”, “e”, and “psi”.
 #'   Rows correspond to segments; columns correspond to samples/pseudobulks.
 #' @param groupby Either:
-#'   \itemize{
-#'     \item A vector of length `ncol(pbas)` that directly gives a group label for each column, or
-#'     \item One or more column names in `colData(pbas)`, whose values (pasted together if multiple) define the grouping factor.
-#'   }
-#'   See `\link{get_groupby_factor}` for details.
-#' @param parallel Logical; if `TRUE`, fit per‐segment GLMs in parallel (requires a registered `plyr` backend). Default `FALSE`.
-#' @param verbose Logical; if `TRUE`, prints each group being tested. Default `FALSE`.
+#'   - Vector of length `nrow(x)` or `ncol(x)` (for `SummarizedExperiment`): treated as the grouping factor directly.
+#'   - Character scalar or vector of column names in `x` (or in `colData(x)` if `x` is a `SummarizedExperiment`):
+#'            those columns are concatenated row-wise (using `paste()` or `interaction()`) to form a grouping factor.
+#'   See \code{\link{get_groupby_factor}} for details.
+#' @param parallel Logical: if `TRUE`, fit per‐segment GLMs in parallel (requires a registered `plyr` backend). Default `FALSE`.
+#' @param verbose Logical: if `TRUE`, prints each group being tested. Default `FALSE`.
 #'
 #' @return A list with three elements:
-#'   \describe{
-#'     \item{pv}{Matrix: Raw p‐values, with rows = segments, columns = group labels}
-#'     \item{fdr}{Matrix: Benjamini-Hochberg FDR (across all segments)}
-#'     \item{dpsi}{Matrix: Delta‐PSI (mean PSI(group) - mean PSI(others)) per segment}
-#'   }
-#'   Row names of each matrix are `rownames(pbas)`; column names are the unique groups.
+#'   - pv Matrix: Raw p‐values, with rows = segments, columns = group labels
+#'   - fdr Matrix: Benjamini-Hochberg FDR (across all segments)
+#'   - dpsi Matrix: Delta‐PSI (mean PSI(group) - mean PSI(others)) per segment
+#'   Row names of each matrix are `rownames(pbas)`; column names are the unique groups
 #'
 #' @details
 #' 1. Builds a grouping factor via `get_groupby_factor(pbas, groupby)`.
@@ -625,7 +1257,7 @@ test_pair_as <- function(
 #'    }
 #' 3. Adjusts each column of `pv` by Benjamini-Hochberg into `fdr[, group]`.
 #'
-#' @seealso `\link{fit_as_glm}`, `\link{get_groupby_factor}`, `\link{calc_psi}`
+#' @seealso \code{\link{fit_as_glm}}, \code{\link{get_groupby_factor}}, \code{\link{calc_psi}}
 #' @export
 find_marker_as <- function(
     pbas,
@@ -689,22 +1321,138 @@ find_marker_as <- function(
   ))
 }
 
+#' Filter segments and samples based on coverage and group criteria
+#'
+#' This function takes a `SummarizedExperiment` containing alternative splicing data
+#' (with assays `i` for inclusion counts and `e` for exclusion counts), and filters out:
+#'   1. pseudobulk samples with fewer than `sample_min_ncells` cells,
+#'   2. cell‐type groups with fewer than `celltype_min_samples` samples,
+#'   3. segments (rows) that do not meet minimum coverage across pseudobulks,
+#'   4. segments with low variability (standard deviation of PSI).
+#'
+#' @param pbas SummarizedExperiment: each row is a segment and each column is a pseudobulk.
+#'   Must contain assays named `i` (inclusion) and `e` (exclusion).
+#'   Rows correspond to segments; columns correspond to samples/pseudobulks.
+#' @param sample_filter Logical vector (length = number of columns in `pbas`): indicates which samples to retain initially.
+#'   Defaults: `TRUE` for all samples.
+#' @param sites Character vector: splice‐site patterns to keep (e.g., `c("ad", "aa", "dd")`).
+#'   Only segments whose `rowData(pbas)$sites` is in this set will be retained.
+#' @param min_cov Integer: minimum total junction coverage (`i + e`) for a pseudobulk to count toward segment inclusion. Default 10.
+#' @param sample_min_ncells Integer: minimum number of cells per pseudobulk; pseudobulk samples with fewer cells are filtered out. Default 20.
+#' @param celltype_min_samples Integer: minimum number of pseudobulk samples per group (as defined by `groupby`) to keep that group. Default 2.
+#' @param seg_min_samples Integer: the absolute minimum number of pseudobulks (after filtering by `min_cov`) that a segment must be observed in. Default 4.
+#' @param seg_min_samples_fraq Numeric: minimum fraction of total pseudobulk samples that must meet `min_cov` for a segment to be retained. Default 0.2.
+#'   The effective minimum samples per segment is `max(seg_min_samples, ncol(pbas) * seg_min_samples_fraq)`.
+#' @param seg_min_sd Numeric: Minimum standard deviation of PSI (percent spliced‐in) across pseudobulks for a segment to be retained. Default 0.1.
+#' @param groupby Either
+#'   - a character vector of length `ncol(pbas)` giving an existing grouping factor for each column, or
+#'   - a character scalar or vector of column names in `colData(pbas)` whose pasted‐together values define the grouping factor.
+#'   See `\link{get_groupby_factor}` for details.
+#'
+#' @return SummarizedExperiment: containing only those pseudobulks and segments that satisfy all criteria.
+#'   The returned object always have assays `i`, `e` converted to dense matrices,
+#'   and include a `psi` assay (percent spliced‐in) for each retained segment/samples.
+#'   The `rowData` also contain a column `nna` (number of pseudobulks with `i+e >= min_cov`) and `sd` (standard deviation of PSI).
+#'
+#' @examples
+#' \dontrun{
+#' data(pbas)
+#' filtered_se <- filter_segments_and_samples(
+#'   pbas = pbas,
+#'   sample_filter = TRUE,
+#'   sites = c("ad", "aa", "dd"),
+#'   min_cov = 10,
+#'   sample_min_ncells = 20,
+#'   celltype_min_samples = 2,
+#'   seg_min_samples = 4,
+#'   seg_min_samples_fraq = 0.2,
+#'   seg_min_sd = 0.1,
+#'   groupby = "celltype"
+#' )
+#' head(filtered_se)
+#' }
+#'
+#' @seealso \code{\link{get_groupby_factor}}
+#' @export
+filter_segments_and_samples <- function(
+    pbas,
+    sample_filter = TRUE,
+    sites = c("ad", "aa", "dd"),
+    min_cov = 10,
+    sample_min_ncells = 20,
+    celltype_min_samples = 2,
+    seg_min_samples = 4,
+    seg_min_samples_fraq = 0.2,
+    seg_min_sd = 0.1,
+    groupby = "celltype") {
+  ## 1. Filter out pseudobulk samples with fewer than sample_min_ncells cells
+  # Filter pseudobulk samples with fewer cells
+  sample_filter <- sample_filter & (SummarizedExperiment::colData(pbas)$ncells >= sample_min_ncells)
+
+  # Determine how many samples remain in each group (celltype)
+  group_factor <- get_groupby_factor(pbas, groupby) # returns a factor vector (length = ncol)
+  ct_counts <- table(group_factor[sample_filter]) # Count samples per group (only among those passing sample_filter)
+
+  # Only keep samples whose group has at least 'celltype_min_samples' pseudobulks
+  sample_filter <- sample_filter & (group_factor %in% names(ct_counts)[ct_counts >= celltype_min_samples])
+
+  pbas <- pbas[, sample_filter] # Subset the SummarizedExperiment columns (samples)
+
+
+  ## 2. Filter out cell‐type groups with fewer than celltype_min_samples samples
+  # Keep only rows where rowData(pbas)$sites is in the specified 'sites' vector
+  seg_sel <- SummarizedExperiment::rowData(pbas)$sites %in% sites
+  pbas <- pbas[seg_sel, ]
+
+  # Compute, for each segment, how many pseudobulks have (i + e) >= min_cov
+  #   - assay(pbas, "i") and assay(pbas, "e") give inclusion/exclusion counts
+  #   - Convert these to dense matrices to simplify row/column sums
+  SummarizedExperiment::assay(pbas, "i") <- as.matrix(SummarizedExperiment::assay(pbas, "i"))
+  SummarizedExperiment::assay(pbas, "e") <- as.matrix(SummarizedExperiment::assay(pbas, "e"))
+
+  # 'nna' = number of pseudobulks with total coverage >= min_cov
+  SummarizedExperiment::rowData(pbas)$nna <- Matrix::rowSums((SummarizedExperiment::assay(pbas, "i")
+                                                            + SummarizedExperiment::assay(pbas, "e")) >= min_cov)
+
+
+  ## 3. Filter out segments (rows) that do not meet minimum coverage across pseudobulks
+  # Determine per‐segment minimum required pseudobulks:
+  # If fractional rule (seg_min_samples_fraq) yields more required samples than seg_min_samples,
+  # use the larger of the two.
+  min_samples_required <- max(seg_min_samples, ceiling(ncol(pbas) * seg_min_samples_fraq))
+  seg_sel2 <- SummarizedExperiment::rowData(pbas)$nna >= min_samples_required
+  pbas <- pbas[seg_sel2, ]
+
+
+  ## 4. Compute PSI (percent spliced‐in) and filter by segment variability
+  # Calculate PSI = i / (i + e), setting PSI to NA whenever total coverage < min_cov
+  psi_mat <- calc_psi(pbas, min_cov = min_cov)
+  SummarizedExperiment::assay(pbas, "psi") <- psi_mat
+
+  # Compute standard deviation of PSI across pseudobulks for each segment
+  SummarizedExperiment::rowData(pbas)$sd <- apply(SummarizedExperiment::assay(pbas, "psi"), 1, stats::sd, na.rm = TRUE)
+
+  # Keep only segments with standard deviation above threshold
+  seg_sel3 <- SummarizedExperiment::rowData(pbas)$sd > seg_min_sd
+  pbas <- pbas[seg_sel3, ]
+
+  # Return the filtered SummarizedExperiment
+  return(pbas)
+}
 
 #' Select top marker segments per group (celltype)
 #'
-#' From a list of per‐segment test results (as returned by `find_marker_as()`),
-#'  this function selects up to `n` top segments per group
-#'  whose FDR is below a threshold and whose absolute delta‐PSI exceeds a threshold.
+#' From a list of per‐segment test results (as returned by \code{\link{find_marker_as}}),
+#' this function selects up to `n` top segments per group
+#' whose FDR is below a threshold and whose absolute delta‐PSI exceeds a threshold.
 #' Optionally, it removes duplicate segments so that each segment appears only once
-#'  (assigned to the group where it has the largest |dpsi|).
+#' (assigned to the group where it has the largest |dpsi|).
 #'
 #' @param markers A list containing numeric matrices `pv`, `fdr`, and `dpsi`,
-#'   each a matrix with rows = segments and columns = group labels (as returned by `find_marker_as()`).
-#'   \describe{
-#'     \item{`markers$pv`}{Matrix of raw p‐values, dimensions: ∣segments∣ × ∣groups∣.}
-#'     \item{`markers$fdr`}{Matrix of Benjamini‐Hochberg adjusted FDR p‐values, same dimensions.}
-#'     \item{`markers$dpsi`}{Matrix of delta‐PSI (mean PSI(group) - mean PSI(others)), same dimensions.}
-#'   }
+#'   each a matrix with rows = segments and columns = group labels (as returned by \code{\link{find_marker_as}}).
+#'   - `markers$pv`: Matrix of raw p‐values, dimensions: ∣segments∣ × ∣groups∣
+#'   - `markers$fdr`: Matrix of Benjamini‐Hochberg adjusted FDR p‐values, same dimensions
+#'   - `markers$dpsi`: Matrix of delta‐PSI (mean PSI(group) - mean PSI(others)), same dimensions
 #' @param n Integer: maximum number of markers to return per cell type (default: 5).
 #' @param fdr_thr Numeric: false discovery rate cutoff (default: 0.05).
 #' @param dpsi_thr Numeric: minimum absolute delta PSI cutoff (default: 0.1).
@@ -712,13 +1460,11 @@ find_marker_as <- function(
 #'                         (the one with highest |dpsi|) across all cell types (default: `TRUE`).
 #'
 #' @return A data.frame with selected marker segments. Columns:
-#'   \describe{
-#'     \item{`pv`}{Raw p‐value from the likelihood‐ratio test for the group effect in the selected group.}
-#'     \item{`fdr`}{Benjamini‐Hochberg adjusted FDR value for the segment in the selected group.}
-#'     \item{`dpsi`}{Delta‐PSI (signed) for the segment in the selected group.}
-#'     \item{`seg_id`}{Segment identifier (rownames of `markers$pv`).}
-#'     \item{`group`}{Group label for which this segment is selected.}
-#'   }
+#'   - `pv`: Raw p‐value from the likelihood‐ratio test for the group effect in the selected group
+#'   - `fdr`: Benjamini‐Hochberg adjusted FDR value for the segment in the selected group
+#'   - `dpsi`: Delta‐PSI (signed) for the segment in the selected group
+#'   - `seg_id`: Segment identifier (rownames of `markers$pv`)
+#'   - `group`: Group label for which this segment is selected
 #'   Rows are ordered by descending |dpsi| across all selected segments.
 #'
 #' @details
@@ -748,7 +1494,7 @@ find_marker_as <- function(
 #' df <- select_markers(pbasf@metadata$markers, n = 10, fdr_thr = 0.01, dpsi_thr = 0.2)
 #' head(df)
 #'
-#' @seealso `\link{find_marker_as}`, `\link{test_all_groups_as}`, `\link{test_pair_as}`
+#' @seealso \code{\link{find_marker_as}}, \code{\link{test_all_groups_as}}, \code{\link{test_pair_as}}
 #' @export
 select_markers <- function(
     markers,
@@ -823,31 +1569,27 @@ select_markers <- function(
 
 #' Select markers from all‐celltype test results
 #'
-#' From a data.frame of per‐segment results comparing all groups simultaneously (e.g., output of `test_all_groups_as()`),
+#' From a data.frame of per‐segment results comparing all groups simultaneously (e.g., output of \code{\link{test_all_groups_as}}),
 #'   this function selects only those segments that pass both a group‐level FDR threshold and a minimum delta‐PSI threshold.
 #' It returns a data.frame with one row per qualifying segment.
 #'
-#' @param all_celltype_df A data.frame (rownames = segment IDs) (output of `test_all_groups_as()`), containing columns:
-#'   \describe{
-#'     \item{overdispersion}{Estimated dispersion from each segment’s GLM.}
-#'     \item{group}{Raw p‐value from the likelihood‐ratio test for the `group` term.}
-#'     \item{group_fdr}{Benjamini‐Hochberg adjusted FDR (across all segments).}
-#'     \item{low_state}{Group label with lowest mean PSI (from `get_dpsi()`).}
-#'     \item{high_state}{Group label with highest mean PSI.}
-#'     \item{dpsi}{Difference in mean PSI between `high_state` and `low_state`.}
-#'   }
+#' @param all_celltype_df A data.frame (rownames = segment IDs) (output of \code{\link{test_all_groups_as}}), containing columns:
+#'   - `overdispersion`: Estimated dispersion from each segment’s GLM
+#'   - `group`: Raw p‐value from the likelihood‐ratio test for the `group` term
+#'   - `group_fdr`: Benjamini‐Hochberg adjusted FDR (across all segments)
+#'   - `low_state`: Group label with lowest mean PSI (from `get_dpsi()`)
+#'   - `high_state`: Group label with highest mean PSI
+#'   - `dpsi`: Difference in mean PSI between `high_state` and `low_state`
 #' @param fdr_thr Numeric: false discovery rate cutoff (default: 0.05).
 #' @param dpsi_thr Numeric: minimum absolute delta PSI cutoff (default: 0.1).
 #'
 #' @return A data.frame with one row per segment satisfying `group_fdr < fdr_thr` and `dpsi > dpsi_thr`.
 #'   Columns in the returned data.frame:
-#'   \describe{
-#'     \item{`pv`}{Raw p‐value from the likelihood‐ratio test for the group effect (copied from `all_celltype_df$group`).}
-#'     \item{`fdr`}{Benjamini‐Hochberg adjusted FDR (copied from `all_celltype_df$group_fdr`).}
-#'     \item{`dpsi`}{Delta‐PSI (copied from `all_celltype_df$dpsi`).}
-#'     \item{`seg_id`}{Segment ID (rownames of `all_celltype_df`).}
-#'     \item{`group`}{Group label with highest mean PSI (copied from `all_celltype_df$high_state`).}
-#'   }
+#'   - `pv`: Raw p‐value from the likelihood‐ratio test for the group effect (copied from `all_celltype_df$group`)
+#'   - `fdr`: Benjamini‐Hochberg adjusted FDR (copied from `all_celltype_df$group_fdr`)
+#'   - `dpsi`: Delta‐PSI (copied from `all_celltype_df$dpsi`)
+#'   - `seg_id`: Segment ID (rownames of `all_celltype_df`)
+#'   - `group`: Group label with highest mean PSI (copied from `all_celltype_df$high_state`)
 #'   Row names of the returned data.frame are the segment IDs.
 #'
 #' @examples
@@ -878,7 +1620,6 @@ select_markers_from_all_celltype_test <- function(
   return(result)
 }
 
-
 #' Select combined marker segments from per‐group and all‐groups tests
 #'
 #' This function merges two sets of marker results:
@@ -889,34 +1630,28 @@ select_markers_from_all_celltype_test <- function(
 #' The result contains at most `n` segments per group, with ties broken by largest |dpsi|.
 #'
 #' @param markers A list containing numeric matrices `pv`, `fdr`, and `dpsi`,
-#'   each a matrix with rows = segments and columns = group labels (as returned by `find_marker_as()`).
-#'   \describe{
-#'     \item{`markers$pv`}{Matrix of raw p‐values, dimensions: ∣segments∣ × ∣groups∣.}
-#'     \item{`markers$fdr`}{Matrix of Benjamini‐Hochberg adjusted FDR p‐values, same dimensions.}
-#'     \item{`markers$dpsi`}{Matrix of delta‐PSI (mean PSI(group) - mean PSI(others)), same dimensions.}
-#'   }
-#' @param all_celltype_df A data.frame (rownames = segment IDs) (output of `test_all_groups_as()`), containing columns:
-#'   \describe{
-#'     \item{overdispersion}{Estimated dispersion from each segment’s GLM.}
-#'     \item{group}{Raw p‐value from the likelihood‐ratio test for the `group` term.}
-#'     \item{group_fdr}{Benjamini‐Hochberg adjusted FDR (across all segments).}
-#'     \item{low_state}{Group label with lowest mean PSI (from `get_dpsi()`).}
-#'     \item{high_state}{Group label with highest mean PSI.}
-#'     \item{dpsi}{Difference in mean PSI between `high_state` and `low_state`.}
-#'   }
+#'   each a matrix with rows = segments and columns = group labels (as returned by \code{\link{find_marker_as}}).
+#'   - `markers$pv`: Matrix of raw p‐values, dimensions: ∣segments∣ × ∣groups∣
+#'   - `markers$fdr`: Matrix of Benjamini‐Hochberg adjusted FDR p‐values, same dimensions
+#'   - `markers$dpsi`: Matrix of delta‐PSI (mean PSI(group) - mean PSI(others)), same dimensions
+#' @param all_celltype_df A data.frame (rownames = segment IDs) (output of \code{\link{test_all_groups_as}}), containing columns:
+#'   - `overdispersion`: Estimated dispersion from each segment’s GLM
+#'   - `group`: Raw p‐value from the likelihood‐ratio test for the `group` term
+#'   - `group_fdr`: Benjamini‐Hochberg adjusted FDR (across all segments)
+#'   - `low_state`: Group label with lowest mean PSI (from `get_dpsi()`)
+#'   - `high_state`: Group label with highest mean PSI
+#'   - `dpsi`: Difference in mean PSI between `high_state` and `low_state`
 #' @param n Integer: maximum number of markers to return per cell type (after combining) (default: `Inf` (no limit)).
 #' @param fdr_thr Numeric: false discovery rate cutoff (default: 0.05).
 #' @param dpsi_thr Numeric: minimum absolute delta PSI cutoff (default: 0.1).
 #'
 #' @return A data.frame with one row per selected segment, containing:
-#'   \describe{
-#'     \item{`pv`}{Raw p‐value (from either per‐group or all‐groups test).}
-#'     \item{`fdr`}{Adjusted FDR (from the same test).}
-#'     \item{`dpsi`}{Delta‐PSI (for the group that nominated this segment).}
-#'     \item{`seg_id`}{Segment IDs (rownames).}
-#'     \item{`group`}{Group label for which the segment is selected.}
-#'     \item{`is_marker`}{Logical: `TRUE` if selected by the per‐group test, `FALSE` if only from the all‐groups test.}
-#'   }
+#'   - `pv`: Raw p‐value (from either per‐group or all‐groups test)
+#'   - `fdr`: Adjusted FDR (from the same test)
+#'   - `dpsi`: Delta‐PSI (for the group that nominated this segment)
+#'   - `seg_id`: Segment IDs (rownames)
+#'   - `group`: Group label for which the segment is selected
+#'   - `is_marker`: Logical: `TRUE` if selected by the per‐group test, `FALSE` if only from the all‐groups test
 #'   Row names are the segment IDs. Rows are ordered within each group by descending |dpsi| and limited to `n` per group.
 #'
 #' @details
@@ -929,7 +1664,7 @@ select_markers_from_all_celltype_test <- function(
 #' 3. Combine and trim:
 #'    For each group, among combined rows (priority first), keep at most `n` segments ranked by descending |dpsi|.
 #'
-#' @seealso `\link{select_markers}`, `\link{select_markers_from_all_celltype_test}`
+#' @seealso \code{\link{select_markers}}, \code{\link{select_markers_from_all_celltype_test}}
 #' @export
 select_all_markers <- function(
     markers,
@@ -975,7 +1710,7 @@ select_all_markers <- function(
     if (nrow(df_group) > n) {
       df_group <- df_group[seq_len(n), , drop = FALSE]
     }
-    return(df_group)
+    df_group
   })
   final_df <- do.call(rbind, trimmed_list)
   rownames(final_df) <- final_df$seg_id
@@ -985,1035 +1720,6 @@ select_all_markers <- function(
 
   return(final_df)
 }
-
-
-###### prepare_reference.R ######
-
-#' Annotate coding status of segments using a GTF file
-#'
-#' Given a path to an Ensembl GTF (gene annotation) and an AS result list containing segment coordinates,
-#'  this function determines whether each segment overlaps coding sequence (CDS) regions.
-#' It assigns coding status:
-#'   - 'c' if the segment is fully contained within a CDS (i.e., likely constitutive exon),
-#'   - 'p' if the segment partially overlaps a CDS,
-#'   - 'n' if the segment does not overlap any CDS.
-#' It also flags whether the segment’s gene has at least one coding overlap.
-#'
-#' @param gtf_path Character: path to an Ensembl GTF file
-#'   (tab‐delimited, with columns: `chr_id`, `feature` (e.g., "CDS"), `start`, `stop`, `strand`, and gene metadata).
-#'   Must be readable by `read.table(..., comment.char = "#")`.
-#' @param as_list SAJR::loadSAData() output list containing segment coordinates.
-#' List containing at least these components:
-#'   \describe{
-#'     \item{`seg`}{A data.frame with columns `chr_id`, `start`, `stop`, `strand`, and `gene_id` for each segment. Row names are segment IDs.}
-#'   }
-#'
-#' @return The input `as_list` with additional columns:
-#'   \describe{
-#'     \item{`seg$cod`}{Character vector of length ∣segments∣.
-#'           Each element is `'c'` if the segment is completely within a CDS, `'p'` if partially overlaps, or `'n'` if no overlap.}
-#'     \item{`seg$cod.gene`}{Logical vector of length ∣segments∣. `TRUE` if the segment’s gene contains at least one segment with `cod != 'n'`.}
-#'   }
-#'   The modified `as_list` is returned invisibly.
-#'
-#' @details
-#' 1. Read the GTF file via `read.table(gtf_path, sep = "\t", header = FALSE, comment.char = "#")` and
-#'    filter to rows where the second column (`feature`) == "CDS".
-#'    Keep columns: `chr_id`, `start`, `stop`, `strand`.
-#' 2. Force CDS entries to a `GRanges` using `GenomicRanges::GRanges()`.
-#'    - If some `chr_id` values lack the "chr" prefix but segments use it (or vice versa), prefix or strip "chr" to match.
-#' 3. Reduce the CDS ranges per chromosome/strand to merge overlapping exons (via `reduce()`).
-#' 4. Build a `GRanges` for all segments from `as_list$seg`, using `chr_id`, `start`, `stop`, and `strand`.
-#' 5. Use `findOverlaps(seg_gr, cds_gr, type = "any")` to find any overlap, and `findOverlaps(seg_gr, cds_gr, type = "within")` to find full containment.
-#' 6. Initialise `cod = 'n'` for all segments. For indices in the "any" overlap set, set `cod = 'p'`. For indices in the "within" set, set `cod = 'c'`.
-#' 7. Determine `cod.gene` by marking as `TRUE` any segment whose `gene_id` appears among those with `cod != 'n'`.
-#'
-#' @note
-#' - Requires `GenomicRanges` for `GRanges`, `reduce()`, and `findOverlaps()`.
-#' - Uses `IRanges::IRanges()` internally for range construction.
-#' - If chromosome naming mismatches occur ("chr1" vs. "1"), this function attempts to harmonize by adding "chr" prefix where needed.
-#'
-#' @seealso `\link[GenomicRanges]{GRanges}`, `\link[GenomicRanges]{findOverlaps}`, `\link[GenomicRanges]{reduce}`
-#' @export
-add_is_coding_by_ens_gtf <- function(gtf_path, as_list) {
-  # 1. Read GTF and keep only CDS lines
-  gtf_df <- utils::read.table(gtf_path,
-    sep = "\t",
-    header = FALSE,
-    comment.char = "#",
-    stringsAsFactors = FALSE
-  )
-  # Columns: V1=chr_id, V3=feature, V4=start, V5=stop, V7=strand
-  cds_df <- gtf_df[gtf_df[, 3] == "CDS", , drop = FALSE]
-  colnames(cds_df)[c(1, 4, 5, 7)] <- c("chr_id", "start", "stop", "strand") # Rename columns for clarity
-  cds_df <- cds_df[, c("chr_id", "start", "stop", "strand")]
-
-
-  # 2. CDS Entries: GRanges
-  # Harmonize chromosome naming: if some segment chr_ids have "chr" prefix but CDS lack it, or vice versa
-  seg_chr <- as_list$seg$chr_id
-  if (any(startsWith(seg_chr, "chr")) && !any(startsWith(cds_df$chr_id, "chr"))) {
-    cds_df$chr_id <- paste0("chr", cds_df$chr_id)
-  } else if (!any(startsWith(seg_chr, "chr")) && any(startsWith(cds_df$chr_id, "chr"))) {
-    cds_df$chr_id <- sub("^chr", "", cds_df$chr_id)
-  }
-
-  # Build GRanges for CDS
-  cds_gr <- GenomicRanges::GRanges(
-    seqnames = cds_df$chr_id,
-    ranges   = IRanges::IRanges(start = cds_df$start, end = cds_df$stop),
-    strand   = cds_df$strand
-  )
-
-
-  # 3. Merge overlapping CDS ranges
-  cds_gr <- GenomicRanges::reduce(cds_gr)
-
-
-  # 4. Build GRanges for segments
-  seg_df <- as_list$seg
-  seg_gr <- GenomicRanges::GRanges(
-    seqnames = seg_df$chr_id,
-    ranges = IRanges::IRanges(start = seg_df$start, end = seg_df$stop),
-    strand = ifelse(is.na(seg_df$strand), "*",
-      ifelse(seg_df$strand == 1, "+", ifelse(seg_df$strand == -1, "-", "*"))
-    )
-  )
-
-
-  # 5. Find overlaps: any vs. within
-  ol_any <- GenomicRanges::findOverlaps(seg_gr, cds_gr, type = "any", ignore.strand = FALSE)
-  ol_within <- GenomicRanges::findOverlaps(seg_gr, cds_gr, type = "within", ignore.strand = FALSE)
-
-
-  # 6. Initialise coding status
-  n_segs <- length(seg_gr)
-  cod_stat <- rep("n", n_segs)
-
-  # Mark partial overlaps as "p"
-  ol_any_idx <- unique(S4Vectors::queryHits(ol_any))
-  cod_stat[ol_any_idx] <- "p"
-
-  # Mark full containment as "c"
-  ol_within_idx <- unique(S4Vectors::queryHits(ol_within))
-  cod_stat[ol_within_idx] <- "c"
-
-  # Assign to as_list$seg$cod
-  as_list$seg$cod <- cod_stat
-
-
-  # 7. Determine which genes have at least one coding segment
-  coding_genes <- unique(seg_df$gene_id[cod_stat != "n"])
-  as_list$seg$cod.gene <- seg_df$gene_id %in% coding_genes
-
-  return(as_list)
-}
-
-#################################
-
-
-#' Aggregate single-cell counts into pseudobulk per group
-#'
-#' Given a `SummarizedExperiment` of single-cell assays (e.g., inclusion/exclusion counts),
-#'  this function sums counts within each group (as defined by `groupby`), removes specified derivative assays,
-#'  and returns a new `SummarizedExperiment` where each column corresponds to a group-level pseudobulk.
-#'
-#' @param se A `SummarizedExperiment` where rows are features (e.g., segments) and columns are individual cells or barcodes.
-#'           Assays include `i`, `e`, `counts`, etc.
-#' @param groupby Either:
-#'   \itemize{
-#'     \item A character vector of length `ncol(se)` giving the group label for each column, or
-#'     \item One or more column names in `colData(se)`, whose values (pasted together if multiple)
-#'           define the grouping factor via `get_groupby_factor()`.
-#'   }
-#'   After grouping, columns with the same label will be summed together.
-#' @param clean_derivatives Character vector of assay names to remove before summation
-#'   (e.g., `c("psi", "cpm")`). Default `c("psi", "cpm")`.
-#'
-#' @return A new `SummarizedExperiment` with:
-#'   \describe{
-#'     \item{Assays}{Each assay from `se`, except those in `clean_derivatives`, replaced by a matrix of summed values per group.}
-#'     \item{rowRanges}{Copied from `rowRanges(se)`.}
-#'     \item{colData}{A data.frame of group-level metadata: one row per group, including any columns from `colData(se)`
-#'                      that are constant within each group, plus aggregated columns via `pseudobulk_metadata()`.}
-#'   }
-#'
-#' @details
-#' 1. Converts `groupby` into a grouping vector via `get_groupby_factor(se, groupby)`.
-#' 2. Drops any assays listed in `clean_derivatives` from `se`.
-#' 3. For each remaining assay, uses `visutils::calcColSums()` to sum counts for columns that share the same
-#'    group label.
-#' 4. Builds a metadata data.frame by calling `pseudobulk_metadata(colData(se), groupby)`, which:
-#'    \enumerate{
-#'      \item Splits `colData(se)` into sub-data.frames by group.
-#'      \item For each group, retains columns that are constant across cells and applies aggregation functions
-#'            (e.g., sum of `ncells`) for specified columns.
-#'      \item Recombines group-level rows into a single data.frame, with row names matching group labels.
-#'    }
-#' 5. Constructs a new `SummarizedExperiment` with summed assay matrices, original `rowRanges(se)`, and
-#'    the aggregated `colData` (one row per group).
-#'
-#' @seealso \code{\link{get_groupby_factor}}, \code{\link{pseudobulk_metadata}}, \code{\link[visutils]{calcColSums}}
-#' @export
-pseudobulk <- function(
-    se,
-    groupby,
-    clean_derivatives = c("psi", "cpm")) {
-  # 1. Determine grouping labels for each column
-  group_factor <- get_groupby_factor(se, groupby)
-
-  # 2. Remove specified derivative assays before summing
-  to_remove <- intersect(SummarizedExperiment::assayNames(se), clean_derivatives)
-  if (length(to_remove) > 0) {
-    for (assay_name in to_remove) {
-      SummarizedExperiment::assay(se, assay_name) <- NULL
-    }
-  }
-
-  # 3. Sum each assay by group using visutils::calcColSums
-  summed_assays <- list()
-  for (assay_name in SummarizedExperiment::assayNames(se)) {
-    mat <- SummarizedExperiment::assay(se, assay_name)
-    summed_assays[[assay_name]] <- visutils::calcColSums(mat, group_factor)
-  }
-
-  # 4. Build group-level metadata
-  meta <- SummarizedExperiment::as.data.frame(SummarizedExperiment::colData(se))
-  group_meta <- pseudobulk_metadata(meta, group_factor)
-  # Reorder to match the order of columns in summed_assays (rownames of each summed matrix)
-  group_meta <- group_meta[colnames(summed_assays[[1]]), , drop = FALSE]
-
-  # 5. Construct new SummarizedExperiment
-  new_se <- SummarizedExperiment::SummarizedExperiment(
-    assays = summed_assays,
-    rowRanges = SummarizedExperiment::rowRanges(se),
-    colData = group_meta
-  )
-
-  return(new_se)
-}
-
-
-#' Calculate percent spliced‐in (PSI) per segment
-#'
-#' Given a `SummarizedExperiment` containing inclusion (`i`) and exclusion (`e`) counts,
-#'  this function computes, for each segment and sample, the percent spliced‐in: `PSI = i / (i + e)`
-#' If the total counts (`i + e`) for a segment in a sample are below `min_cov`, that PSI is set to `NA`.
-#'
-#' @param se A `SummarizedExperiment` with assays named `i` (inclusion counts) and `e` (exclusion counts).
-#'   Rows are segments; columns are pseudobulk samples.
-#' @param min_cov Integer; minimum total junction coverage (`i + e`) required to compute a valid PSI.
-#'   For any `i + e < min_cov`, the PSI is set to `NA`. Default is `10`.
-#'
-#' @return A numeric matrix of dimensions `nrow(se)` × `ncol(se)` where each entry is the PSI value
-#'   for that segment and sample, or `NA` if coverage is insufficient.
-#'
-#' @examples
-#' \dontrun{
-#' # Assume 'pseudobulk_se' is a SummarizedExperiment with assays 'i' and 'e':
-#' psi_mat <- calc_psi(pseudobulk_se, min_cov = 10)
-#' head(psi_mat)
-#' }
-#'
-#' @seealso \code{\link{pseudobulk}}, \code{\link{calc_cpm}}
-#' @export
-calc_psi <- function(se, min_cov = 10) {
-  # Verify that both 'i' and 'e' assays exist
-  if (!all(c("i", "e") %in% SummarizedExperiment::assayNames(se))) {
-    warning("Assays 'i' and/or 'e' not found in the SummarizedExperiment; returning NULL.")
-    return(NULL)
-  }
-
-  # Extract inclusion and exclusion count matrices
-  inc_mat <- SummarizedExperiment::assay(se, "i")
-  exc_mat <- SummarizedExperiment::assay(se, "e")
-
-  # Compute total counts per segment × sample
-  total_mat <- inc_mat + exc_mat
-
-  # Initialize PSI matrix
-  psi_mat <- inc_mat / total_mat
-
-  # Where total < min_cov, set PSI to NA
-  psi_mat[total_mat < min_cov] <- NA_real_
-
-  return(as.matrix(psi_mat))
-}
-
-
-#' Calculate counts per million (CPM) per gene/feature
-#'
-#' Given a `SummarizedExperiment` containing raw count data (assay named `counts`),
-#'   this function computes counts per million for each feature across samples: `CPM = (counts / library_size) * 1e6`
-#' where `library_size` is the total sum of counts in each sample (column).
-#'
-#' @param se A `SummarizedExperiment` with an assay named `counts` (integer or numeric matrix).
-#'   Rows are features (e.g., genes); columns are samples.
-#'
-#' @return A numeric matrix of the same dimensions as the `counts` assay, where each entry is the counts per million for that feature and sample.
-#'   If `counts` assay is missing, returns `NULL`.
-#'
-#' @examples
-#' \dontrun{
-#' # Assume 'se_counts' is a SummarizedExperiment with assay 'counts'
-#' cpm_mat <- calc_cpm(se_counts)
-#' head(cpm_mat)
-#' }
-#'
-#' @seealso \code{\link{pseudobulk}}
-#' @export
-calc_cpm <- function(se) {
-  # Verify that 'counts' assay exists
-  if (!("counts" %in% SummarizedExperiment::assayNames(se))) {
-    warning("Assay 'counts' not found in the SummarizedExperiment; returning NULL.")
-    return(NULL)
-  }
-
-  # Extract raw counts matrix
-  counts_mat <- SummarizedExperiment::assay(se, "counts")
-
-  # Compute library size per sample (column sums)
-  lib_sizes <- Matrix::colSums(counts_mat, na.rm = TRUE)
-
-  # Avoid division by zero: if any lib_size == 0, set to NA to propagate NA in CPM
-  lib_sizes[lib_sizes == 0] <- NA_real_
-
-  # Compute CPM: (counts / library_size) * 1e6
-  cpm_mat <- sweep(counts_mat, 2, lib_sizes, FUN = "/") * 1e6
-
-  return(as.matrix(cpm_mat))
-}
-
-
-#' Aggregate column‐level metadata for pseudobulk groups
-#'
-#' Given a data.frame of per‐cell metadata and a grouping vector, this function aggregates metadata so that each row corresponds to one group.
-#' For each group:
-#'   1. Columns that are constant within the group are retained.
-#'   2. For any column listed in `aggregate`, a summary function is applied (e.g., sum).
-#'
-#' @param meta A data.frame whose rows correspond to individual cells or samples,
-#'   and whose columns contain metadata (e.g., `sample_id`, `celltype`, `ncells`, etc.).
-#'   Row names should match column names of the corresponding `SummarizedExperiment` if applicable.
-#' @param groupby Either:
-#'   \itemize{
-#'   \item A character vector of length `nrow(meta)` giving a grouping label for each row of `meta`, or
-#'   \item One or more column names in `meta`. In that case, the values of those columns are pasted (row‐wise)
-#'          with the default delimiter to form a grouping factor via `get_groupby_factor()`.
-#'   }
-#'   After grouping, columns with the same label will be summed together.
-#'   See `get_groupby_factor()` for details on how the grouping vector is constructed.
-#' @param aggregate A named list of functions to apply to each column within each group.
-#'   For example, `list(ncells = sum, ngenes = max)` would sum the `ncells` column and take
-#'    the maximum of the `ngenes` column for each group. Default is `list(ncells = sum)`.
-#'
-#' @return A data.frame with one row per unique group. Columns include:
-#'   - Any original columns in `meta` that had the same (constant) value for all rows in that group.
-#'   - For each name in `aggregate`, a new column where the corresponding function has been applied
-#'     to that column’s values within each group.
-#'   Row names of the returned data.frame are the group labels.
-#'
-#' @examples
-#' \dontrun{
-#' # Suppose 'cell_meta' is a data.frame of 1000 cells with columns:
-#' #   sample_id, celltype, ncells, batch, library_size
-#' # We want to pseudobulk by 'celltype', summing 'ncells' and taking max 'library_size':
-#' group_meta <- pseudobulk_metadata(
-#'   meta = cell_meta,
-#'   groupby = "celltype",
-#'   aggregate = list(ncells = sum, library_size = max)
-#' )
-#' # 'group_meta' now has one row per unique celltype.
-#' }
-#'
-#' @seealso \code{\link{pseudobulk}}, \code{\link{get_groupby_factor}}
-#' @export
-pseudobulk_metadata <- function(
-    meta,
-    groupby,
-    aggregate = list(ncells = sum)) {
-  # Construct grouping factor (length = nrow(meta))
-  group_factor <- get_groupby_factor(meta, groupby)
-
-  # Split metadata by group
-  meta_split <- split(meta, group_factor)
-
-  # For each group, retain constant columns and apply aggregation functions
-  aggregated_list <- lapply(meta_split, function(df_group) {
-    # Determine which columns are constant within this group
-    unique_counts <- sapply(df_group, function(col) length(unique(col)))
-    constant_cols <- names(unique_counts)[unique_counts == 1]
-
-    # Start result with unique values of constant columns
-    result <- unique(df_group[, constant_cols, drop = FALSE])
-
-    # Apply aggregation functions to specified columns
-    for (col_name in intersect(names(aggregate), colnames(df_group))) {
-      result[, col_name] <- aggregate[[col_name]](df_group[[col_name]])
-    }
-
-    return(result)
-  })
-
-  # Determine common columns across all groups (intersection of column names)
-  common_cols <- Reduce(intersect, lapply(aggregated_list, colnames))
-
-  # Combine into a single data.frame, keeping only common columns
-  combined_meta <- do.call(rbind, lapply(aggregated_list, function(df) df[, common_cols, drop = FALSE]))
-
-  return(combined_meta)
-}
-
-
-#' Construct a SummarizedExperiment from raw segment data and metadata
-#'
-#' Given a list containing segment coordinate data (`seg`) and assay matrices (`i`, `e`, etc.),
-#'  this function builds a `SummarizedExperiment` by:
-#' 1. Extracting `seg` (a data.frame of segment attributes) and using its columns to create
-#'    `rowRanges` (`GRanges`) with genomic coordinates and metadata.
-#' 2. Taking the remaining list elements as assays (each must be a matrix with rows matching `rownames(seg)`).
-#' 3. Incorporating provided column metadata `col_data` as `colData`.
-#'
-#' @param data_list A list with at least one element named `seg`, where:
-#'   - `data_list$seg` is a data.frame with columns:
-#'     - `chr_id` (chromosome names matching those in the assays’ row names),
-#'     - `start` (numeric start coordinate),
-#'     - `stop` (numeric end coordinate),
-#'     - `strand` (numeric code: `1` for '+', `-1` for '-', or `NA`/other for '*'),
-#'     - plus any additional per‐segment metadata columns.
-#'   - All other list elements are assay matrices (e.g., `i`, `e`, `counts`) whose row names
-#'     match `rownames(data_list$seg)` and whose column names match `rownames(col_data)`.
-#' @param col_data A data.frame of column‐level metadata, where each row corresponds to a column
-#'   of the resulting `SummarizedExperiment`. Row names of `col_data` must match the column names
-#'   of each assay matrix provided in `data_list`.
-#'
-#' @return A `SummarizedExperiment` with:
-#'  \itemize{
-#'   \item `assays`: each list element of `data_list` (except `seg`) becomes an assay, with its matrix data.
-#'   \item `rowRanges`: a `GRanges` object constructed from `data_list$seg`, with ranges given by
-#'     `chr_id`, `start`, `stop`, `strand` (converted to `'+'`, `'-'`, or `'*'`), and additional
-#'      metadata columns stored in `elementMetadata(rowRanges)`.
-#'   \item `colData`: set to the provided `col_data`.
-#'  }
-#'
-#' @examples
-#' \dontrun{
-#' # Example 'raw_list' structure:
-#' raw_list <- list(
-#'   seg = data.frame(
-#'     chr_id = c("chr1", "chr1"),
-#'     start = c(100000, 200000),
-#'     stop = c(100100, 200100),
-#'     strand = c(1, -1),
-#'     gene_id = c("GENE1", "GENE2"),
-#'     row.names = c("SEG1", "SEG2"),
-#'     stringsAsFactors = FALSE
-#'   ),
-#'   i = matrix(1:4, nrow = 2, dimnames = list(c("SEG1", "SEG2"), c("S1", "S2"))),
-#'   e = matrix(5:8, nrow = 2, dimnames = list(c("SEG1", "SEG2"), c("S1", "S2")))
-#' )
-#' col_metadata <- data.frame(
-#'   sample_id = c("S1", "S2"),
-#'   celltype = c("A", "B"),
-#'   row.names = c("S1", "S2"),
-#'   stringsAsFactors = FALSE
-#' )
-#'
-#' se_obj <- make_summarized_experiment(raw_list, col_metadata)
-#' }
-#'
-#' @seealso \code{\link[GenomicRanges]{GRanges}}, \code{\link[SummarizedExperiment]{SummarizedExperiment}}
-#' @export
-make_summarized_experiment <- function(data_list, col_data) {
-  # 1. Extract segment data.frame and remove from list
-  seg_df <- data_list$seg
-  data_list$seg <- NULL
-
-  # 2. Build GRanges from seg_df
-  # Convert numeric strand codes to +, -, or *
-  strand_vec <- ifelse(
-    is.na(seg_df$strand),
-    "*",
-    ifelse(seg_df$strand == 1, "+",
-      ifelse(seg_df$strand == -1, "-", "*")
-    )
-  )
-  # Create GRanges; feature_id slot holds the row names of seg_df
-  row_ranges <- GenomicRanges::GRanges(
-    seqnames = seg_df$chr_id,
-    ranges = IRanges::IRanges(start = seg_df$start, end = seg_df$stop),
-    strand = strand_vec,
-    feature_id = rownames(seg_df)
-  )
-
-  # 3. Remove coordinate columns from seg_df, leaving only per‐segment metadata
-  meta_cols <- seg_df
-  meta_cols$chr_id <- NULL
-  meta_cols$start <- NULL
-  meta_cols$stop <- NULL
-  meta_cols$strand <- NULL
-
-  # Attach remaining columns as elementMetadata on row_ranges
-  S4Vectors::elementMetadata(row_ranges)[names(meta_cols)] <- meta_cols
-
-  # 4. The remaining items in data_list are assays; ensure each is a matrix
-  assay_list <- data_list
-  #   (Assume user provided correct matrix dimensions and row names match seg_df)
-
-  # 5. Construct and return SummarizedExperiment
-  se_obj <- SummarizedExperiment::SummarizedExperiment(
-    assays    = assay_list,
-    rowRanges = row_ranges,
-    colData   = col_data
-  )
-
-  return(se_obj)
-}
-
-
-#' Plot heatmaps of alternative splicing (PSI) and gene expression (CPM) for selected markers
-#'
-#' This function takes pseudobulk splicing data (`pbas`) and gene expression data (`pbge`),
-#' along with a set of marker segments, and plots two side‐by‐side heatmaps:
-#'   1. PSI values (percent spliced‐in) for each marker segment across groups.
-#'   2. CPM values (counts per million) for corresponding genes across groups.
-#'
-#' @param pbas A `SummarizedExperiment` of pseudobulk splicing data. Must contain:
-#'   - `assay(pbas, "i")` and `assay(pbas, "e")` (inclusion/exclusion counts).
-#'   - `assay(pbas, "psi")` (percent spliced‐in) or else `psi` will be calculated internally.
-#'   Rows are segment IDs; columns are group labels (matching `colData(pbas)` grouping factor).
-#' @param pbge A `SummarizedExperiment` of pseudobulk gene expression data. Must contain:
-#'   - `assay(pbge, "cpm")` (counts per million).
-#'   Rows are gene IDs; columns are group labels matching `pbas`.
-#' @param groupby A grouping label (column name in `colData(pbas)` and `colData(pbge)`)
-#'   used to aggregate and order groups. Can be a single column name or a vector of column names;
-#'   see `get_groupby_factor()` for details.
-#' @param markers A data.frame of selected marker segments. Must contain columns:
-#'   - `seg_id` (segment ID matching `rownames(pbas)`)
-#'   - `dpsi` (delta‐PSI sign and magnitude; positive means inclusion in higher group)
-#'   - `group` (group label for which this segment is a marker)
-#'   - `is_marker` (logical; `TRUE` for top per‐group markers, `FALSE` for background markers)
-#'   Optionally, `markers` may contain a column `gene_id` if plotting gene names.
-#' @param psi_scale Logical; if `TRUE`, PSI values are scaled (z‐score) per segment (column of heatmap). Default is `FALSE` (raw PSI in (0,1)).
-#' @param cpm_scale Logical; if `TRUE`, CPM values are standardized (z‐score) per gene (column of heatmap). Default is `TRUE`.
-#' @param group_colors Optional named vector mapping group labels to colors. If `NULL`, default colors are assigned via `char2col()`.
-#' @param col_palette A vector of colors (length ≥ 2) for heatmap coloring (e.g., `rev(hcl.colors(100, "RdYlBu"))`). Default is `rev(hcl.colors(100, "RdYlBu"))`.
-#' @param gene_names_col Optional character. If `markers` has a column with gene names (e.g., `"name"`),
-#'   specify it here so gene names appear in the column labels of the heatmap. Default is `NULL`.
-#' @param ... Additional arguments passed to underlying plotting functions (`imageWithText`, `plotColorLegend2`).
-#'
-#' @return Invisibly returns `NULL`. The function draws two heatmaps in the current graphics device:
-#'   - Left: PSI heatmap, with rows = groups, columns = marker segments.
-#'   - Right: CPM heatmap, with rows = groups, columns = corresponding genes.
-#'   If scaling is applied (`psi_scale` or `cpm_scale`), legends reflect z‐score ranges.
-#'
-#' @details
-#' 1. Calls `pseudobulk()` on `pbas` and `pbge` to ensure group‐level assays (`psi` and `cpm`) exist.
-#' 2. Extracts a PSI matrix (`psi_mat`) of size (n_groups × n_markers) for `markers$seg_id`.
-#'    - If `markers$dpsi` is negative, flips PSI to `1 − PSI` so that all markers align directionally.
-#' 3. Determines group ordering via classical Multidimensional Scaling (MDS) on `psi_mat` correlations, so that similar groups cluster together.
-#' 4. Reorders `markers` by `markers$group` matching MDS order, then by `dpsi`.
-#' 5. Extracts CPM matrix (`cpm_mat`) of size (n_groups × n_genes) for genes corresponding to `markers$seg_id`.
-#'    - If `gene_names_col` is provided, column names become `paste0(gene_name, ":", seg_id)`.
-#' 6. Scales `psi_mat` and/or `cpm_mat` if requested (`psi_scale`, `cpm_scale`).
-#' 7. Prepares row annotations (`row_anns`) with:
-#'    - `ct`: group label
-#'    - `is_marker`: color `gray`/`white` for `TRUE`/`FALSE`
-#'    - `psi_flipped`: whether a marker’s `dpsi < 0` (flipped direction; same gray/white legend).
-#' 8. Draws two heatmaps side‐by‐side:
-#'    - **PSI heatmap**: calls `imageWithText()` with `psi_mat`, coloring by `col_palette`, showing `ct` annotation.
-#'    - **PSI legend**: if `psi_scale = FALSE`, calls `plotColorLegend2()` to display color scale (0,1) or z‐score limits.
-#'    - **CPM heatmap**: calls `imageWithText()` with `cpm_mat`, similar annotations.
-#'    - **CPM legend**: calls `plotColorLegend2()` to show z‐score or raw CPM scale.
-#'
-#' @seealso \code{\link{pseudobulk}}, \code{\link{calc_psi}}, \code{\link{calc_cpm}}, \code{\link{get_groupby_factor}}
-#' @export
-marker_heatmap <- function(
-    pbas,
-    pbge,
-    groupby,
-    markers,
-    psi_scale = FALSE,
-    cpm_scale = TRUE,
-    group_colors = NULL,
-    col_palette = rev(grDevices::hcl.colors(100, "RdYlBu")),
-    gene_names_col = NULL,
-    ...) {
-  # 1. Ensure pseudobulk assays exist
-  as_pb <- pseudobulk(pbas, groupby, clean_derivatives = c("psi", "cpm"))
-  if (!("psi" %in% SummarizedExperiment::assayNames(as_pb))) {
-    SummarizedExperiment::assay(as_pb, "psi") <- calc_psi(as_pb)
-  }
-  ge_pb <- pseudobulk(pbge, groupby, clean_derivatives = c())
-  if ("counts" %in% SummarizedExperiment::assayNames(ge_pb)) {
-    SummarizedExperiment::assay(ge_pb, "cpm") <- calc_cpm(ge_pb)
-  }
-
-  # 2. Extract PSI matrix for marker segments
-  psi <- t(SummarizedExperiment::assay(as_pb, "psi")[markers$seg_id, , drop = FALSE])
-  # Flip PSI for markers with negative dpsi
-  psi[, markers$dpsi < 0] <- 1 - psi[, markers$dpsi < 0]
-
-  # If is_marker is missing, default to TRUE
-  if (is.null(markers$is_marker)) {
-    markers$is_marker <- TRUE
-  }
-
-  # 3. Determine group ordering via MDS on PSI correlations
-  cor_mat <- stats::cor(t(psi), use = "pairwise.complete.obs")
-  cor_mat[is.na(cor_mat)] <- 0
-  mds_coords <- stats::cmdscale(1 - cor_mat, k = 1)
-  groups <- rownames(psi)[order(mds_coords[, 1])]
-
-  # 4. Reorder markers by group (matching MDS order), then by group factor
-  markers <- markers[order(markers$group), ]
-  markers <- markers[order(match(markers$group, groups)), ]
-  psi <- psi[groups, markers$seg_id, drop = FALSE]
-
-  # 5. Extract CPM matrix for genes corresponding to segments
-  gids <- SummarizedExperiment::rowData(as_pb)[rownames(markers), "gene_id"]
-  cpm <- t(SummarizedExperiment::assay(ge_pb, "cpm")[gids, rownames(psi), drop = FALSE])
-  if (!is.null(gene_names_col)) {
-    gene_names <- S4Vectors::elementMetadata(SummarizedExperiment::rowRanges(ge_pb))[gids, gene_names_col]
-    colnames(cpm) <- paste0(gene_names)
-    colnames(psi) <- paste0(colnames(cpm), ":", colnames(psi))
-  }
-
-  # 6. Determine colorscales
-  psi_zlim <- c(0, 1)
-  if (psi_scale) {
-    psi <- apply(psi, 2, visutils::scaleTo)
-    psi_zlim <- NULL
-  }
-  cpm_zlim <- range(cpm, na.rm = TRUE)
-  if (cpm_scale) {
-    cpm <- scale(cpm)
-    max_abs <- max(abs(cpm), na.rm = TRUE)
-    cpm_zlim <- c(-max_abs, max_abs)
-  }
-
-  # 7. Prepare row annotations
-  row_anns <- list(
-    ct = markers$group,
-    is_marker = as.character(markers$is_marker),
-    psi_flipped = as.character(markers$dpsi < 0)
-  )
-  log2col <- c("TRUE" = "gray", "FALSE" = "white")
-  row_ann_cols <- list(
-    ct = if (is.null(group_colors)) visutils::char2col(rownames(psi)) else group_colors,
-    is_marker = log2col,
-    psi_flipped = log2col
-  )
-
-  # 8. Plot side-by-side with layout
-  graphics::layout(matrix(c(rep(1, nrow(psi)), rep(2, nrow(psi))), ncol = 2, byrow = FALSE),
-    widths = c(1, 1)
-  )
-  graphics::par(
-    bty = "n", tcl = -0.2, mgp = c(1.3, 0.3, 0), mar = c(0, 0.5, 0, 0),
-    oma = c(6, 34, 3, 1), xpd = NA
-  )
-
-  # 8a. PSI heatmap
-  xaxlab <- rownames(psi)
-  if (graphics::par("mfrow")[1] == 2) xaxlab <- NULL
-  visutils::imageWithText(
-    psi,
-    "",
-    colAnns = list(ct = rownames(psi)),
-    rowAnns = row_anns,
-    colAnnCols = list(ct = row_ann_cols$ct),
-    rowAnnCols = row_ann_cols,
-    xaxlab = xaxlab,
-    main = "Alternative Splicing",
-    col = col_palette,
-    zlim = psi_zlim,
-    ...
-  )
-  if (!psi_scale) {
-    visutils::plotColorLegend2(
-      graphics::grconvertX(1.02, "npc", "nfc"), 1,
-      graphics::grconvertY(0.1, "npc", "nfc"),
-      graphics::grconvertY(0.9, "npc", "nfc"),
-      fullzlim = psi_zlim, zlim = psi_zlim,
-      zfun = identity,
-      z2col = function(x) visutils::num2col(x, col_palette),
-      title = "PSI"
-    )
-  }
-
-  # 8b. CPM heatmap
-  visutils::imageWithText(
-    cpm,
-    "",
-    colAnns = list(ct = rownames(psi)),
-    rowAnns = row_anns,
-    colAnnCols = list(ct = row_ann_cols$ct),
-    rowAnnCols = row_ann_cols,
-    main = "Gene Expression",
-    col = col_palette,
-    zlim = cpm_zlim,
-    ...
-  )
-  visutils::plotColorLegend2(
-    graphics::grconvertX(1.02, "npc", "nfc"), 1,
-    graphics::grconvertY(0.1, "npc", "nfc"),
-    graphics::grconvertY(0.9, "npc", "nfc"),
-    fullzlim = cpm_zlim, zlim = cpm_zlim,
-    zfun = identity,
-    z2col = function(x) visutils::num2col(x, col_palette),
-    title = ifelse(cpm_scale, "z-score", "CPM")
-  )
-
-  invisible(NULL)
-}
-
-
-###### pipeline helpers ######
-
-#' Load intron counts as a SummarizedExperiment
-#'
-#' Reads a Matrix Market file (and accompanying keys) to build a `SummarizedExperiment`
-#'  where rows are intron segments and columns are cell barcodes.
-#' Uses `read_named_mm()` to load the counts matrix along with row and column names.
-#'
-#' @param path Character; file prefix for the Matrix Market data.
-#'   If `path.mtx` or `path.mtx.gz` exists, `read_named_mm(path)` is used to load the sparse matrix.
-#'
-#' @return A `SummarizedExperiment` with:
-#'   - An assay named `counts` (a sparse `dgCMatrix`) storing intron counts: rows = intron IDs, columns = barcodes.
-#'   - `rowRanges`: a `GRanges` built by parsing row names (intron IDs) of the form `chr:strand:start-end`.
-#'     It sets `seqnames = chr`, `ranges = IRanges(start, end)`, and `strand` as `"+"` or `"-"`.
-#'   - `colData`: a data.frame with one column `barcode` (the column names of the count matrix).
-#'   If no `.mtx` file is found, returns `NULL`.
-#'
-#' @seealso \code{\link{read_named_mm}}, \code{\link[Matrix]{readMM}}
-#' @export
-load_introns_as_se <- function(path) {
-  # 1. Use read_named_mm() to load the sparse matrix with row/column names
-  counts <- read_named_mm(path)
-  if (is.null(counts)) {
-    return(NULL)
-  }
-
-  # 2. Extract feature IDs and barcodes from the matrix
-  feature_ids <- rownames(counts)
-  barcodes <- colnames(counts)
-
-  # 3. Parse feature IDs of the form "chr:strand:start-end"
-  parts <- strsplit(feature_ids, ":")
-  chr <- vapply(parts, `[`, character(1), 1)
-  strand_code <- vapply(parts, `[`, character(1), 2)
-  coords <- vapply(parts, `[`, character(1), 3)
-  coord_split <- strsplit(coords, "-")
-  start <- as.integer(vapply(coord_split, `[`, character(1), 1))
-  end <- as.integer(vapply(coord_split, `[`, character(1), 2))
-  strand <- ifelse(strand_code == "1", "+",
-    ifelse(strand_code == "-1", "-", "*")
-  )
-
-  # 4. Build GRanges for rowRanges
-  row_ranges <- GenomicRanges::GRanges(
-    seqnames = chr,
-    ranges = IRanges::IRanges(start = start, end = end),
-    strand = strand,
-    feature_id = feature_ids
-  )
-
-  # 5. Construct SummarizedExperiment
-  se <- SummarizedExperiment::SummarizedExperiment(
-    assays    = list(counts = counts),
-    rowRanges = row_ranges,
-    colData   = data.frame(barcode = barcodes, row.names = barcodes)
-  )
-
-  return(se)
-}
-
-
-#' Bind a list of sparse matrices by rows, aligning columns
-#'
-#' Given a list of matrices (possibly sparse), this function ensures that each matrix hasthe same set of column names
-#'   by inserting zero‐filled sparse columns where needed, then row‐binds them into a single sparse matrix.
-#'
-#' @param mat_list A list of matrices or sparse matrices. Each should have identical row names
-#'   but may differ in column names.
-#' @param colnames_union Optional character vector of column names to enforce across all matrices.
-#'   If `NULL`, defaults to the union of all column names in `mat_list`.
-#'
-#' @return A single sparse matrix (class `dgCMatrix`) obtained by row‐binding all matrices in
-#'   `mat_list`, with columns matching `colnames_union`. Missing columns in a given matrix
-#'   are filled with zero‐filled sparse columns.
-#'
-#' @examples
-#' \dontrun{
-#' library(Matrix)
-#' mat1 <- sparseMatrix(
-#'   i = c(1, 2), j = c(1, 2), x = c(1, 2),
-#'   dims = c(2, 3), dimnames = list(c("r1", "r2"), c("A", "B", "C"))
-#' )
-#' mat2 <- sparseMatrix(
-#'   i = c(1, 2), j = c(2, 3), x = c(3, 4),
-#'   dims = c(2, 3), dimnames = list(c("r1", "r2"), c("B", "C", "D"))
-#' )
-#' combined <- rbind_matrix(list(mat1, mat2))
-#' # Result has columns A, B, C, D, with zeros filled sparsely
-#' }
-#'
-#' @export
-rbind_matrix <- function(mat_list, colnames_union = NULL) {
-  # Determine union of column names if not provided
-  if (is.null(colnames_union)) {
-    colnames_union <- unique(unlist(lapply(mat_list, colnames)))
-  }
-
-  # Adjust each matrix to have all columns, filling missing with sparse zeros
-  adjusted_list <- lapply(mat_list, function(mat) {
-    # Coerce to sparse dgCMatrix if not already
-    if (!inherits(mat, "dgCMatrix")) {
-      mat <- Matrix::Matrix(as.matrix(mat), sparse = TRUE)
-    }
-    missing_cols <- setdiff(colnames_union, colnames(mat))
-    if (length(missing_cols) > 0) {
-      zero_mat <- Matrix::Matrix(
-        0,
-        nrow = nrow(mat),
-        ncol = length(missing_cols),
-        sparse = TRUE,
-        dimnames = list(rownames(mat), missing_cols)
-      )
-      mat <- cbind(mat, zero_mat)
-    }
-    # Reorder columns to match colnames_union
-    mat[, colnames_union, drop = FALSE]
-  })
-
-  # Row-bind all adjusted sparse matrices; result remains sparse
-  do.call(rbind, adjusted_list)
-}
-
-
-#' Subset or reorder sparse matrix columns to a specified set
-#'
-#' Given a matrix or sparse matrix and a target set of column names, this function returns
-#' a new sparse matrix whose columns match exactly the target set. Existing columns are
-#' retained (and reordered if needed), and any target column not present is added as a
-#' zero‐filled sparse column.
-#'
-#' @param mat A matrix or sparse matrix with named columns.
-#' @param target_cols Character vector specifying the desired column names (and order).
-#'
-#' @return A sparse matrix (`dgCMatrix`) with columns exactly `target_cols`. Any column in
-#'   `target_cols` not originally present in `mat` will be inserted as a zero‐filled sparse column.
-#'   Row names are unchanged.
-#'
-#' @examples
-#' \dontrun{
-#' library(Matrix)
-#' m <- sparseMatrix(
-#'   i = c(1, 2, 1), j = c(1, 2, 3), x = c(1, 2, 3),
-#'   dims = c(2, 4), dimnames = list(c("r1", "r2"), c("A", "B", "D", "E"))
-#' )
-#' result <- sub_cols_matrix(m, c("A", "B", "C", "D", "E"))
-#' # 'C' inserted as sparse zero column; columns ordered A,B,C,D,E
-#' }
-#'
-#' @export
-sub_cols_matrix <- function(mat, target_cols) {
-  # Coerce to sparse if not already
-  if (!inherits(mat, "dgCMatrix")) {
-    mat <- Matrix::Matrix(as.matrix(mat), sparse = TRUE)
-  }
-  missing_cols <- setdiff(target_cols, colnames(mat))
-  if (length(missing_cols) > 0) {
-    zero_mat <- Matrix::Matrix(
-      0,
-      nrow = nrow(mat),
-      ncol = length(missing_cols),
-      sparse = TRUE,
-      dimnames = list(rownames(mat), missing_cols)
-    )
-    mat <- cbind(mat, zero_mat)
-  }
-  # Reorder columns to exactly match target_cols
-  mat[, target_cols, drop = FALSE]
-}
-
-
-#' Read a Matrix Market file with accompanying row/column keys
-#'
-#' Attempts to load a sparse matrix from `<prefix>.mtx` or `<prefix>.mtx.gz`,
-#'  and then assigns row names from `<prefix>_key1.csv` (or `.gz`) and column names from `<prefix>_key2.csv` (or `.gz`).
-#'
-#' @param prefix Character; file path prefix for the Matrix Market data.
-#'   If `prefix.mtx` or `prefix.mtx.gz` exists, reads it via `Matrix::readMM()`.
-#'   Row names are read from `prefix_key1.csv(.gz)`, column names from `prefix_key2.csv(.gz)`.
-#'
-#' @return A sparse matrix (`dgCMatrix`) with row names set to feature IDs (from key1) and
-#'   column names set to barcodes (from key2). If no `.mtx` file is found, returns `NULL`.
-#'
-#' @examples
-#' \dontrun{
-#' # Suppose files "data/counts.mtx" and "data/counts_key1.csv", "data/counts_key2.csv" exist:
-#' mat <- read_named_mm("data/counts")
-#' dim(mat)
-#' head(rownames(mat))
-#' head(colnames(mat))
-#' }
-#'
-#' @seealso \code{\link[Matrix]{readMM}}, \code{\link{load_introns_as_se}}
-#' @export
-read_named_mm <- function(prefix) {
-  # Check for .mtx file (uncompressed or gzipped)
-  mtx_path <- if (file.exists(paste0(prefix, ".mtx"))) {
-    paste0(prefix, ".mtx")
-  } else if (file.exists(paste0(prefix, ".mtx.gz"))) {
-    paste0(prefix, ".mtx.gz")
-  } else {
-    return(NULL)
-  }
-
-  # Read the sparse matrix
-  mat <- Matrix::readMM(mtx_path)
-
-  # Read row names from prefix_key1.csv or .gz
-  key1_path <- if (file.exists(paste0(prefix, "_key1.csv"))) {
-    paste0(prefix, "_key1.csv")
-  } else if (file.exists(paste0(prefix, "_key1.csv.gz"))) {
-    paste0(prefix, "_key1.csv.gz")
-  } else {
-    stop("Row key file not found: ", prefix, "_key1.csv(.gz)")
-  }
-  rownames(mat) <- readLines(key1_path)
-
-  # Read column names from prefix_key2.csv or .gz
-  key2_path <- if (file.exists(paste0(prefix, "_key2.csv"))) {
-    paste0(prefix, "_key2.csv")
-  } else if (file.exists(paste0(prefix, "_key2.csv.gz"))) {
-    paste0(prefix, "_key2.csv.gz")
-  } else {
-    stop("Column key file not found: ", prefix, "_key2.csv(.gz)")
-  }
-  colnames(mat) <- readLines(key2_path)
-
-  return(mat)
-}
-
-
-#' Load single-cell AS counts (inclusion/exclusion) as sparse matrices
-#'
-#' Given a set of segment IDs and a file prefix, this function reads inclusion (`.i.mtx`)
-#'  and exclusion (`.e.mtx`) counts via `read_named_mm()`,
-#'  then subsets to only the requested segments and ensures consistent columns between `i` and `e`.
-#'
-#' @param segs A data.frame or `SummarizedExperiment`` whose row names are the segment IDs
-#'   to load. Only those segment IDs will be returned in the output matrices.
-#' @param path Character; file prefix (without extension) for inclusion/exclusion data.
-#'   The function expects files:
-#'   - `paste0(path, ".i.mtx")` (or `.i.mtx.gz`) and accompanying keys
-#'     for inclusion counts, and
-#'   - `paste0(path, ".e.mtx")` (or `.e.mtx.gz`) and accompanying keys
-#'     for exclusion counts.
-#'   Uses `read_named_mm()`` to read each.
-#'
-#' @return A list with two sparse matrices of class `dgCMatrix`:
-#'   - `i`: inclusion counts (rows = `rownames(segs)`, columns as in the `.i` matrix),
-#'   - `e`: exclusion counts (rows = `rownames(segs)`, columns matching the inclusion matrix).
-#'
-#' @details
-#' 1. Calls `read_named_mm(paste0(path, ".e"))`` to load the exclusion count matrix.
-#' 2. Calls `read_named_mm(paste0(path, ".i"))`` to load the inclusion count matrix.
-#' 3. Subsets both matrices to only rows matching `rownames(segs)``.
-#' 4. Ensures that the inclusion matrix uses the same column ordering as the exclusion matrix.
-#' 5. Returns a list `list(e = e_sub, i = i_sub)``.
-#'
-#' @seealso \code{\link{read_named_mm}}, \code{\link{load_introns_as_se}}
-#' @export
-load_sc_as <- function(segs, path) {
-  # Read exclusion counts
-  e_mat <- read_named_mm(paste0(path, ".e"))
-  # Read inclusion counts
-  i_mat <- read_named_mm(paste0(path, ".i"))
-  # Subset to only requested segment IDs
-  seg_ids <- rownames(segs)
-  e_sub <- e_mat[seg_ids, , drop = FALSE]
-  # Align inclusion columns to exclusion
-  i_sub <- i_mat[seg_ids, colnames(e_sub), drop = FALSE]
-  return(list(e = e_sub, i = i_sub))
-}
-
-
-#' Compute delta‐PSI (difference in percent spliced‐in) per segment
-#'
-#' For a `SummarizedExperiment` of splicing segments, this function first pseudobulks the data by `groupby`,
-#'   computes PSI per segment (using `calc_psi()`), and then identifies for each segment
-#'   the group with lowest mean PSI (`low_state`),  the group with highest mean PSI (`high_state`), and their difference (`dpsi`).
-#'
-#' @param data A `SummarizedExperiment` where rows are segments and columns are single‐cell or pseudobulk samples.
-#'   Must contain assays `i` (inclusion) and `e` (exclusion) so that `calc_psi()` works after pseudobulking.
-#' @param groupby Either:
-#'   - A character vector of length `ncol(data)` giving a grouping label for each column, or
-#'   - One or more column names in `colData(data)`, whose values (pasted if multiple) define the grouping factor.
-#'   See `get_groupby_factor()` for details.
-#' @param min_cov Integer; minimum total junction coverage (`i + e`) per pseudobulk required to compute a valid PSI.
-#'                PSI values where `i + e < min_cov` are set to `NA`. Default is 50.
-#'
-#' @return A data.frame with one row per segment (rownames = `rownames(data)`), containing columns:
-#'   - `low_state`: group label with lowest mean PSI (or `NA` if fewer than two non‐NA values),
-#'   - `high_state`: group label with highest mean PSI,
-#'   - `dpsi`: numeric difference `PSI[high_state] - PSI[low_state]` (or `NA` if not computable).
-#'
-#' @details
-#' 1. The function calls `pseudobulk(data, groupby)`, which sums counts per group.
-#' 2. It then computes a PSI matrix via `calc_psi()` on the pseudobulk, obtaining one PSI value per segment × group.
-#' 3. For each segment (row of the PSI matrix):
-#'    - Extracts non‐`NA` PSI values, sorts them by ascending PSI.
-#'    - If at least two groups have non‐`NA` PSI, sets `low_state` to the name of the group with smallest PSI,
-#'      `high_state` to the group with largest PSI, and `dpsi = PSI[high_state] - PSI[low_state]`.
-#'    - Otherwise, leaves all three as `NA`.
-#'
-#' @seealso \code{\link{pseudobulk}}, \code{\link{calc_psi}}
-#' @export
-get_dpsi <- function(data, groupby, min_cov = 50) {
-  # 1. Pseudobulk by group
-  pb <- pseudobulk(data, groupby)
-
-  # 2. Compute PSI per segment × group
-  psi_mat <- calc_psi(pb, min_cov = min_cov)
-  # psi_mat is a matrix (n_segments × n_groups), possibly with NA
-
-  # 3. For each segment, find low_state, high_state, dpsi
-  result_list <- apply(psi_mat, 1, function(x) {
-    # x: numeric vector of PSI values for one segment across groups
-    non_na <- x[!is.na(x)]
-    if (length(non_na) < 2) {
-      return(data.frame(
-        low_state = NA_character_,
-        high_state = NA_character_,
-        dpsi = NA_real_
-      ))
-    }
-    # Sort by PSI
-    sorted_vals <- sort(non_na)
-    low_val <- sorted_vals[1]
-    high_val <- sorted_vals[length(sorted_vals)]
-    # Get group names corresponding to low_val and high_val
-    # 'names(non_na)' holds group labels
-    low_state <- names(non_na)[which(non_na == low_val)[1]]
-    high_state <- names(non_na)[which(non_na == high_val)[1]]
-    data.frame(
-      low_state = low_state,
-      high_state = high_state,
-      dpsi = high_val - low_val
-    )
-  })
-
-  # 4. Combine into a data.frame with rownames = segment IDs
-  result_df <- do.call(rbind, result_list)
-  rownames(result_df) <- rownames(data)
-  return(result_df)
-}
-
 
 #' Find nearest constitutive exons for a given segment
 #'
@@ -2129,63 +1835,6 @@ find_nearest_constant_exons <- function(se, sid, psi_thr = 0.95) {
   return(c(up = up_id, down = down_id))
 }
 
-
-#' Construct a contingency table from paired x and y vectors
-#'
-#' Given two vectors `x` and `y` of equal length, and a corresponding vector `i` of values,
-#'  this function creates a matrix whose rows correspond to each unique value in `x`,
-#'  columns correspond to each unique value in `y`,
-#'  and entries are taken from `i` at matching `(x, y)` pairs.
-#'
-#' @param x A vector (atomic) of length n, representing row labels.
-#' @param y A vector of length n, representing column labels.
-#' @param i A vector of length n, where `i[j]` is the value to place at row = `x[j]`, column = `y[j]`.
-#'
-#' @return A matrix of dimension `length(unique(x)) × length(unique(y))`, with row names set to sorted unique values of `x`
-#'   and column names set to sorted unique values of `y`.
-#'   For each position `(r, c)`, the entry is the value from `i[j]` where `x[j] == r` and `y[j] == c`. If no such `j` exists, the entry is `NA`.
-#'
-#' @examples
-#' \dontrun{
-#' x <- c("A", "B", "A", "C")
-#' y <- c("X", "Y", "X", "Z")
-#' i <- c(1, 2, 3, 4)
-#' # unique(x) = A, B, C; unique(y) = X, Y, Z
-#' # (A, X) appears twice with values 1 and 3; the latter overwrites
-#' result <- cast_xy_table(x, y, i)
-#' #      X  Y  Z
-#' #  A   3 NA NA
-#' #  B  NA  2 NA
-#' #  C  NA NA  4
-#' }
-#'
-#' @export
-cast_xy_table <- function(x, y, i) {
-  # Determine sorted unique values
-  ys <- sort(unique(y))
-  xs <- sort(unique(x))
-
-  # Initialize result matrix with NA
-  m <- matrix(
-    NA,
-    nrow = length(xs),
-    ncol = length(ys),
-    dimnames = list(xs, ys)
-  )
-
-  # Convert to character for indexing
-  x_char <- as.character(x)
-  y_char <- as.character(y)
-
-  # Fill in values
-  for (j in seq_along(x_char)) {
-    m[x_char[j], y_char[j]] <- i[j]
-  }
-
-  return(m)
-}
-
-
 #' Determine genomic plotting coordinates for a segment with flanking exons
 #'
 #' Given a segment ID (`sid`), a pseudobulk `SummarizedExperiment` (`pb_all`), and a gene annotation data.frame (`gene_descr`),
@@ -2252,9 +1901,8 @@ get_plot_coords_for_seg <- function(sid, pb_all, gene_descr) {
     stop_coord <- gene_descr[gene_id, "end"]
   }
 
-  return(list(start = start_coord, stop = stop_coord))
+  list(start = start_coord, stop = stop_coord)
 }
-
 
 #' Sum coverage and junction counts across a list of coverage objects
 #'
@@ -2366,9 +2014,49 @@ sum_covs <- function(cov_list) {
   # 6. Assign updated junction table back to r$juncs
   r$juncs <- all_juncs
 
-  return(r)
+  r
 }
 
+#' Subset a coverage object to a specified genomic window
+#'
+#' Given a coverage object (a list with components `x`, `cov`, `start`, `end`, and `juncs`),
+#' this function filters the coverage and junctions to only include data within `[start, stop]`.
+#'
+#' @param cov A coverage object (list) containing at least:
+#'   - `x`: numeric vector of genomic positions,
+#'   - `cov`: numeric vector or Rle of coverage values at those positions,
+#'   - `start`, `end`: numeric scalars indicating the current coverage bounds,
+#'   - `juncs`: data.frame of junctions with numeric columns `start` and `end`.
+#' @param start Numeric; new window start coordinate.
+#' @param stop Numeric; new window stop coordinate.
+#'
+#' @return The same coverage object `cov`, but with:
+#'   - `cov$cov` and `cov$x` filtered to positions `x >= start & x <= stop`,
+#'   - `cov$start` set to `start`, `cov$end` set to `stop`,
+#'   - `cov$juncs` filtered to rows where `(juncs$start <= stop & juncs$end >= start)`.
+#'
+#' @examples
+#' \dontrun{
+#' # Given cov with positions 1:1000 and junctions spanning various ranges:
+#' cov_window <- subset_cov(cov, start = 100, stop = 200)
+#' }
+#'
+#' @export
+subset_cov <- function(cov, start, stop) {
+  # Filter coverage vector and positions
+  pos_filter <- cov$x >= start & cov$x <= stop
+  cov$cov <- cov$cov[pos_filter]
+  cov$x <- cov$x[pos_filter]
+  # Update stored start/end
+  cov$start <- start
+  cov$end <- stop
+  # Filter junctions overlapping the window
+  cov$juncs <- cov$juncs[
+    cov$juncs$start <= stop & cov$juncs$end >= start, ,
+    drop = FALSE
+  ]
+  cov
+}
 
 #' Plot read coverage and splice junctions for a genomic segment across groups
 #'
@@ -2681,96 +2369,400 @@ plot_segment_coverage <- function(
 }
 
 
-#' Subset a coverage object to a specified genomic window
+###### summary.Rmd ######
+
+#' Compute recommended plot dimensions for a compareCluster result
 #'
-#' Given a coverage object (a list with components `x`, `cov`, `start`, `end`, and `juncs`),
-#' this function filters the coverage and junctions to only include data within `[start, stop]`.
+#' Given a `compareClusterResult` object from `clusterProfiler`,
+#'  this function returns a two‐element numeric vector giving height and width for plotting the results.
+#' The height scales with the number of clusters (up to 5 rows per cluster),
+#'  and the width scales with the number of clusters along the x‐axis.
+#' If `ccr` is `NULL`, returns `c(2, 2)`.
 #'
-#' @param cov A coverage object (list) containing at least:
-#'   - `x`: numeric vector of genomic positions,
-#'   - `cov`: numeric vector or Rle of coverage values at those positions,
-#'   - `start`, `end`: numeric scalars indicating the current coverage bounds,
-#'   - `juncs`: data.frame of junctions with numeric columns `start` and `end`.
-#' @param start Numeric; new window start coordinate.
-#' @param stop Numeric; new window stop coordinate.
+#' @param ccr A `compareClusterResult` object (from `clusterProfiler::compareCluster()`), or `NULL`.
 #'
-#' @return The same coverage object `cov`, but with:
-#'   - `cov$cov` and `cov$x` filtered to positions `x >= start & x <= stop`,
-#'   - `cov$start` set to `start`, `cov$end` set to `stop`,
-#'   - `cov$juncs` filtered to rows where `(juncs$start <= stop & juncs$end >= start)`.
+#' @return A numeric vector of length 2:
+#'   - `height`: if `ccr` is `NULL`, `2`; otherwise `sum(pmin(5, size)) * 0.15 + 3`,
+#'     where `size` is the number of terms per cluster in `ccr@compareClusterResult`.
+#'   - `width`: if `ccr` is `NULL`, `2`; otherwise `length(size) * 0.6 + 7`,
+#'     where `length(size)` is the number of clusters with at least one term.
+#'
+#' @details
+#' 1. If `ccr` is `NULL`, returns `c(2, 2)`.
+#' 2. Otherwise:
+#'    - Extract `ccr@compareClusterResult$Cluster` to tabulate how many terms (rows) belong to each cluster.
+#'    - Cap each cluster’s row count at 5 via `pmin(5, size)`.
+#'    - Compute:
+#'      `height = sum(pmin(5, size)) * 0.15 + 3`,
+#'      `width  = length(size) * 0.6 + 7`, where `size` excludes clusters with zero terms.
 #'
 #' @examples
 #' \dontrun{
-#' # Given cov with positions 1:1000 and junctions spanning various ranges:
-#' cov_window <- subset_cov(cov, start = 100, stop = 200)
+#' dims1 <- get_dit_plot_size(ccr) # for a valid compareClusterResult
+#' dims2 <- get_dit_plot_size(NULL) # returns c(2, 2)
 #' }
 #'
+#' @seealso \code{\link{dotplot}}
 #' @export
-subset_cov <- function(cov, start, stop) {
-  # Filter coverage vector and positions
-  pos_filter <- cov$x >= start & cov$x <= stop
-  cov$cov <- cov$cov[pos_filter]
-  cov$x <- cov$x[pos_filter]
-  # Update stored start/end
-  cov$start <- start
-  cov$end <- stop
-  # Filter junctions overlapping the window
-  cov$juncs <- cov$juncs[
-    cov$juncs$start <= stop & cov$juncs$end >= start, ,
-    drop = FALSE
-  ]
-  return(cov)
-}
-
-
-#' Read an RDS file if it exists, otherwise return NULL
-#'
-#' Attempts to read an RDS file from a given path. If the file does not exist,
-#' returns `NULL` without error.
-#'
-#' @param f Character; file path to the `.rds` file.
-#'
-#' @return The object returned by `readRDS(f)` if `file.exists(f) == TRUE`; otherwise `NULL`.
-#'
-#' @examples
-#' \dontrun{
-#' data_obj <- read_rds_if_exists("output/data.rds")
-#' if (is.null(data_obj)) {
-#'   message("No cached RDS found.")
-#' }
-#' }
-#'
-#' @export
-read_rds_if_exists <- function(f) {
-  if (file.exists(f)) {
-    return(readRDS(f))
+get_dit_plot_size <- function(ccr) {
+  # If NULL, return default (2, 2)
+  if (is.null(ccr)) {
+    return(c(2, 2))
   }
-  return(NULL)
+  # Extract cluster assignments for each term
+  clust_tbl <- table(ccr@compareClusterResult$Cluster)
+  # Keep clusters with at least one term
+  size <- clust_tbl[clust_tbl > 0]
+  # Compute height: sum of min(5, size) * 0.15 + 3
+  height <- sum(pmin(5, size)) * 0.15 + 3
+  # Compute width: number of clusters * 0.6 + 7
+  width <- length(size) * 0.6 + 7
+  c(height = height, width = width)
 }
 
-
-#' Print an informational message with a timestamp
+#' Construct a contingency table from paired x and y vectors
 #'
-#' Prepends `"INFO [<timestamp>]: "` to the given `text` and prints to standard output.
+#' Given two vectors `x` and `y` of equal length, and a corresponding vector `i` of values,
+#'  this function creates a matrix whose rows correspond to each unique value in `x`,
+#'  columns correspond to each unique value in `y`,
+#'  and entries are taken from `i` at matching `(x, y)` pairs.
 #'
-#' @param text Character; message text or format string.
-#' @param ... Additional values to append to `text` via `paste0()`.
+#' @param x A vector (atomic) of length n, representing row labels.
+#' @param y A vector of length n, representing column labels.
+#' @param i A vector of length n, where `i[j]` is the value to place at row = `x[j]`, column = `y[j]`.
 #'
-#' @return Invisibly returns `NULL`; prints `"INFO [YYYY-MM-DD HH:MM:SS]: "` followed by `text`.
+#' @return A matrix of dimension `length(unique(x)) × length(unique(y))`, with row names set to sorted unique values of `x`
+#'   and column names set to sorted unique values of `y`.
+#'   For each position `(r, c)`, the entry is the value from `i[j]` where `x[j] == r` and `y[j] == c`. If no such `j` exists, the entry is `NA`.
 #'
 #' @examples
 #' \dontrun{
-#' log_info("Starting analysis for gene ", gene_id)
+#' x <- c("A", "B", "A", "C")
+#' y <- c("X", "Y", "X", "Z")
+#' i <- c(1, 2, 3, 4)
+#' # unique(x) = A, B, C; unique(y) = X, Y, Z
+#' # (A, X) appears twice with values 1 and 3; the latter overwrites
+#' result <- cast_xy_table(x, y, i)
+#' #      X  Y  Z
+#' #  A   3 NA NA
+#' #  B  NA  2 NA
+#' #  C  NA NA  4
 #' }
 #'
 #' @export
-log_info <- function(text, ...) {
-  msg <- paste0(text, ...)
-  full_msg <- paste0("INFO [", Sys.time(), "]: ", msg)
-  message(full_msg)
+cast_xy_table <- function(x, y, i) {
+  # Determine sorted unique values
+  ys <- sort(unique(y))
+  xs <- sort(unique(x))
+
+  # Initialize result matrix with NA
+  m <- matrix(
+    NA,
+    nrow = length(xs),
+    ncol = length(ys),
+    dimnames = list(xs, ys)
+  )
+
+  # Convert to character for indexing
+  x_char <- as.character(x)
+  y_char <- as.character(y)
+
+  # Fill in values
+  for (j in seq_along(x_char)) {
+    m[x_char[j], y_char[j]] <- i[j]
+  }
+
+  m
+}
+
+
+###### pipeline helpers ######
+
+#' Calculate counts per million (CPM) per gene/feature
+#'
+#' Given a `SummarizedExperiment` containing raw count data (assay named `counts`),
+#'   this function computes counts per million for each feature across samples: `CPM = (counts / library_size) * 1e6`
+#' where `library_size` is the total sum of counts in each sample (column).
+#'
+#' @param se A `SummarizedExperiment` with an assay named `counts` (integer or numeric matrix).
+#'   Rows are features (e.g., genes); columns are samples.
+#'
+#' @return A numeric matrix of the same dimensions as the `counts` assay, where each entry is the counts per million for that feature and sample.
+#'   If `counts` assay is missing, returns `NULL`.
+#'
+#' @examples
+#' \dontrun{
+#' # Assume 'se_counts' is a SummarizedExperiment with assay 'counts'
+#' cpm_mat <- calc_cpm(se_counts)
+#' head(cpm_mat)
+#' }
+#'
+#' @seealso \code{\link{pseudobulk}}
+#' @export
+calc_cpm <- function(se) {
+  # Verify that 'counts' assay exists
+  if (!("counts" %in% SummarizedExperiment::assayNames(se))) {
+    warning("Assay 'counts' not found in the SummarizedExperiment; returning NULL.")
+    return(NULL)
+  }
+
+  # Extract raw counts matrix
+  counts_mat <- SummarizedExperiment::assay(se, "counts")
+
+  # Compute library size per sample (column sums)
+  lib_sizes <- Matrix::colSums(counts_mat, na.rm = TRUE)
+
+  # Avoid division by zero: if any lib_size == 0, set to NA to propagate NA in CPM
+  lib_sizes[lib_sizes == 0] <- NA_real_
+
+  # Compute CPM: (counts / library_size) * 1e6
+  cpm_mat <- sweep(counts_mat, 2, lib_sizes, FUN = "/") * 1e6
+
+  as.matrix(cpm_mat)
+}
+
+#' Plot heatmaps of alternative splicing (PSI) and gene expression (CPM) for selected markers
+#'
+#' This function takes pseudobulk splicing data (`pbas`) and gene expression data (`pbge`),
+#' along with a set of marker segments, and plots two side‐by‐side heatmaps:
+#'   1. PSI values (percent spliced‐in) for each marker segment across groups.
+#'   2. CPM values (counts per million) for corresponding genes across groups.
+#'
+#' @param pbas A `SummarizedExperiment` of pseudobulk splicing data. Must contain:
+#'   - `assay(pbas, "i")` and `assay(pbas, "e")` (inclusion/exclusion counts).
+#'   - `assay(pbas, "psi")` (percent spliced‐in) or else `psi` will be calculated internally.
+#'   Rows are segment IDs; columns are group labels (matching `colData(pbas)` grouping factor).
+#' @param pbge A `SummarizedExperiment` of pseudobulk gene expression data. Must contain:
+#'   - `assay(pbge, "cpm")` (counts per million).
+#'   Rows are gene IDs; columns are group labels matching `pbas`.
+#' @param groupby A grouping label (column name in `colData(pbas)` and `colData(pbge)`)
+#'   used to aggregate and order groups. Can be a single column name or a vector of column names;
+#'   see `get_groupby_factor()` for details.
+#' @param markers A data.frame of selected marker segments. Must contain columns:
+#'   - `seg_id` (segment ID matching `rownames(pbas)`)
+#'   - `dpsi` (delta‐PSI sign and magnitude; positive means inclusion in higher group)
+#'   - `group` (group label for which this segment is a marker)
+#'   - `is_marker` (logical; `TRUE` for top per‐group markers, `FALSE` for background markers)
+#'   Optionally, `markers` may contain a column `gene_id` if plotting gene names.
+#' @param psi_scale Logical; if `TRUE`, PSI values are scaled (z‐score) per segment (column of heatmap). Default is `FALSE` (raw PSI in (0,1)).
+#' @param cpm_scale Logical; if `TRUE`, CPM values are standardized (z‐score) per gene (column of heatmap). Default is `TRUE`.
+#' @param group_colors Optional named vector mapping group labels to colors. If `NULL`, default colors are assigned via `char2col()`.
+#' @param col_palette A vector of colors (length ≥ 2) for heatmap coloring (e.g., `rev(hcl.colors(100, "RdYlBu"))`). Default is `rev(hcl.colors(100, "RdYlBu"))`.
+#' @param gene_names_col Optional character. If `markers` has a column with gene names (e.g., `"name"`),
+#'   specify it here so gene names appear in the column labels of the heatmap. Default is `NULL`.
+#' @param ... Additional arguments passed to underlying plotting functions (`imageWithText`, `plotColorLegend2`).
+#'
+#' @return Invisibly returns `NULL`. The function draws two heatmaps in the current graphics device:
+#'   - Left: PSI heatmap, with rows = groups, columns = marker segments.
+#'   - Right: CPM heatmap, with rows = groups, columns = corresponding genes.
+#'   If scaling is applied (`psi_scale` or `cpm_scale`), legends reflect z‐score ranges.
+#'
+#' @details
+#' 1. Calls `pseudobulk()` on `pbas` and `pbge` to ensure group‐level assays (`psi` and `cpm`) exist.
+#' 2. Extracts a PSI matrix (`psi_mat`) of size (n_groups × n_markers) for `markers$seg_id`.
+#'    - If `markers$dpsi` is negative, flips PSI to `1 − PSI` so that all markers align directionally.
+#' 3. Determines group ordering via classical Multidimensional Scaling (MDS) on `psi_mat` correlations, so that similar groups cluster together.
+#' 4. Reorders `markers` by `markers$group` matching MDS order, then by `dpsi`.
+#' 5. Extracts CPM matrix (`cpm_mat`) of size (n_groups × n_genes) for genes corresponding to `markers$seg_id`.
+#'    - If `gene_names_col` is provided, column names become `paste0(gene_name, ":", seg_id)`.
+#' 6. Scales `psi_mat` and/or `cpm_mat` if requested (`psi_scale`, `cpm_scale`).
+#' 7. Prepares row annotations (`row_anns`) with:
+#'    - `ct`: group label
+#'    - `is_marker`: color `gray`/`white` for `TRUE`/`FALSE`
+#'    - `psi_flipped`: whether a marker’s `dpsi < 0` (flipped direction; same gray/white legend).
+#' 8. Draws two heatmaps side‐by‐side:
+#'    - **PSI heatmap**: calls `imageWithText()` with `psi_mat`, coloring by `col_palette`, showing `ct` annotation.
+#'    - **PSI legend**: if `psi_scale = FALSE`, calls `plotColorLegend2()` to display color scale (0,1) or z‐score limits.
+#'    - **CPM heatmap**: calls `imageWithText()` with `cpm_mat`, similar annotations.
+#'    - **CPM legend**: calls `plotColorLegend2()` to show z‐score or raw CPM scale.
+#'
+#' @seealso \code{\link{pseudobulk}}, \code{\link{calc_psi}}, \code{\link{calc_cpm}}, \code{\link{get_groupby_factor}}
+#' @export
+marker_heatmap <- function(
+    pbas,
+    pbge,
+    groupby,
+    markers,
+    psi_scale = FALSE,
+    cpm_scale = TRUE,
+    group_colors = NULL,
+    col_palette = rev(grDevices::hcl.colors(100, "RdYlBu")),
+    gene_names_col = NULL,
+    ...) {
+  # 1. Ensure pseudobulk assays exist
+  as_pb <- pseudobulk(pbas, groupby, clean_derivatives = c("psi", "cpm"))
+  if (!("psi" %in% SummarizedExperiment::assayNames(as_pb))) {
+    SummarizedExperiment::assay(as_pb, "psi") <- calc_psi(as_pb)
+  }
+  ge_pb <- pseudobulk(pbge, groupby, clean_derivatives = c())
+  if ("counts" %in% SummarizedExperiment::assayNames(ge_pb)) {
+    SummarizedExperiment::assay(ge_pb, "cpm") <- calc_cpm(ge_pb)
+  }
+
+  # 2. Extract PSI matrix for marker segments
+  psi <- t(SummarizedExperiment::assay(as_pb, "psi")[markers$seg_id, , drop = FALSE])
+  # Flip PSI for markers with negative dpsi
+  psi[, markers$dpsi < 0] <- 1 - psi[, markers$dpsi < 0]
+
+  # If is_marker is missing, default to TRUE
+  if (is.null(markers$is_marker)) {
+    markers$is_marker <- TRUE
+  }
+
+  # 3. Determine group ordering via MDS on PSI correlations
+  cor_mat <- stats::cor(t(psi), use = "pairwise.complete.obs")
+  cor_mat[is.na(cor_mat)] <- 0
+  mds_coords <- stats::cmdscale(1 - cor_mat, k = 1)
+  groups <- rownames(psi)[order(mds_coords[, 1])]
+
+  # 4. Reorder markers by group (matching MDS order), then by group factor
+  markers <- markers[order(markers$group), ]
+  markers <- markers[order(match(markers$group, groups)), ]
+  psi <- psi[groups, markers$seg_id, drop = FALSE]
+
+  # 5. Extract CPM matrix for genes corresponding to segments
+  gids <- SummarizedExperiment::rowData(as_pb)[rownames(markers), "gene_id"]
+  cpm <- t(SummarizedExperiment::assay(ge_pb, "cpm")[gids, rownames(psi), drop = FALSE])
+  if (!is.null(gene_names_col)) {
+    gene_names <- S4Vectors::elementMetadata(SummarizedExperiment::rowRanges(ge_pb))[gids, gene_names_col]
+    colnames(cpm) <- paste0(gene_names)
+    colnames(psi) <- paste0(colnames(cpm), ":", colnames(psi))
+  }
+
+  # 6. Determine colorscales
+  psi_zlim <- c(0, 1)
+  if (psi_scale) {
+    psi <- apply(psi, 2, visutils::scaleTo)
+    psi_zlim <- NULL
+  }
+  cpm_zlim <- range(cpm, na.rm = TRUE)
+  if (cpm_scale) {
+    cpm <- scale(cpm)
+    max_abs <- max(abs(cpm), na.rm = TRUE)
+    cpm_zlim <- c(-max_abs, max_abs)
+  }
+
+  # 7. Prepare row annotations
+  row_anns <- list(
+    ct = markers$group,
+    is_marker = as.character(markers$is_marker),
+    psi_flipped = as.character(markers$dpsi < 0)
+  )
+  log2col <- c("TRUE" = "gray", "FALSE" = "white")
+  row_ann_cols <- list(
+    ct = if (is.null(group_colors)) visutils::char2col(rownames(psi)) else group_colors,
+    is_marker = log2col,
+    psi_flipped = log2col
+  )
+
+  # 8. Plot side-by-side with layout
+  graphics::layout(matrix(c(rep(1, nrow(psi)), rep(2, nrow(psi))), ncol = 2, byrow = FALSE),
+    widths = c(1, 1)
+  )
+  graphics::par(
+    bty = "n", tcl = -0.2, mgp = c(1.3, 0.3, 0), mar = c(0, 0.5, 0, 0),
+    oma = c(6, 34, 3, 1), xpd = NA
+  )
+
+  # 8a. PSI heatmap
+  xaxlab <- rownames(psi)
+  if (graphics::par("mfrow")[1] == 2) xaxlab <- NULL
+  visutils::imageWithText(
+    psi,
+    "",
+    colAnns = list(ct = rownames(psi)),
+    rowAnns = row_anns,
+    colAnnCols = list(ct = row_ann_cols$ct),
+    rowAnnCols = row_ann_cols,
+    xaxlab = xaxlab,
+    main = "Alternative Splicing",
+    col = col_palette,
+    zlim = psi_zlim,
+    ...
+  )
+  if (!psi_scale) {
+    visutils::plotColorLegend2(
+      graphics::grconvertX(1.02, "npc", "nfc"), 1,
+      graphics::grconvertY(0.1, "npc", "nfc"),
+      graphics::grconvertY(0.9, "npc", "nfc"),
+      fullzlim = psi_zlim, zlim = psi_zlim,
+      zfun = identity,
+      z2col = function(x) visutils::num2col(x, col_palette),
+      title = "PSI"
+    )
+  }
+
+  # 8b. CPM heatmap
+  visutils::imageWithText(
+    cpm,
+    "",
+    colAnns = list(ct = rownames(psi)),
+    rowAnns = row_anns,
+    colAnnCols = list(ct = row_ann_cols$ct),
+    rowAnnCols = row_ann_cols,
+    main = "Gene Expression",
+    col = col_palette,
+    zlim = cpm_zlim,
+    ...
+  )
+  visutils::plotColorLegend2(
+    graphics::grconvertX(1.02, "npc", "nfc"), 1,
+    graphics::grconvertY(0.1, "npc", "nfc"),
+    graphics::grconvertY(0.9, "npc", "nfc"),
+    fullzlim = cpm_zlim, zlim = cpm_zlim,
+    zfun = identity,
+    z2col = function(x) visutils::num2col(x, col_palette),
+    title = ifelse(cpm_scale, "z-score", "CPM")
+  )
+
   invisible(NULL)
 }
 
+#' Subset or reorder sparse matrix columns to a specified set
+#'
+#' Given a matrix or sparse matrix and a target set of column names, this function returns
+#' a new sparse matrix whose columns match exactly the target set. Existing columns are
+#' retained (and reordered if needed), and any target column not present is added as a
+#' zero‐filled sparse column.
+#'
+#' @param mat A matrix or sparse matrix with named columns.
+#' @param target_cols Character vector specifying the desired column names (and order).
+#'
+#' @return A sparse matrix (`dgCMatrix`) with columns exactly `target_cols`. Any column in
+#'   `target_cols` not originally present in `mat` will be inserted as a zero‐filled sparse column.
+#'   Row names are unchanged.
+#'
+#' @examples
+#' \dontrun{
+#' library(Matrix)
+#' m <- sparseMatrix(
+#'   i = c(1, 2, 1), j = c(1, 2, 3), x = c(1, 2, 3),
+#'   dims = c(2, 4), dimnames = list(c("r1", "r2"), c("A", "B", "D", "E"))
+#' )
+#' result <- sub_cols_matrix(m, c("A", "B", "C", "D", "E"))
+#' # 'C' inserted as sparse zero column; columns ordered A,B,C,D,E
+#' }
+#'
+#' @export
+sub_cols_matrix <- function(mat, target_cols) {
+  # Coerce to sparse if not already
+  if (!inherits(mat, "dgCMatrix")) {
+    mat <- Matrix::Matrix(as.matrix(mat), sparse = TRUE)
+  }
+  missing_cols <- setdiff(target_cols, colnames(mat))
+  if (length(missing_cols) > 0) {
+    zero_mat <- Matrix::Matrix(
+      0,
+      nrow = nrow(mat),
+      ncol = length(missing_cols),
+      sparse = TRUE,
+      dimnames = list(rownames(mat), missing_cols)
+    )
+    mat <- cbind(mat, zero_mat)
+  }
+  # Reorder columns to exactly match target_cols
+  mat[, target_cols, drop = FALSE]
+}
 
 #' Plot MDS with group connections and labels
 #'
@@ -2849,57 +2841,6 @@ plot_mds <- function(xy, celltypes, ct2col, samples, ...) {
 
   invisible(NULL)
 }
-
-
-#' Compute recommended plot dimensions for a compareCluster result
-#'
-#' Given a `compareClusterResult` object from `clusterProfiler`,
-#'  this function returns a two‐element numeric vector giving height and width for plotting the results.
-#' The height scales with the number of clusters (up to 5 rows per cluster),
-#'  and the width scales with the number of clusters along the x‐axis.
-#' If `ccr` is `NULL`, returns `c(2, 2)`.
-#'
-#' @param ccr A `compareClusterResult` object (from `clusterProfiler::compareCluster()`), or `NULL`.
-#'
-#' @return A numeric vector of length 2:
-#'   - `height`: if `ccr` is `NULL`, `2`; otherwise `sum(pmin(5, size)) * 0.15 + 3`,
-#'     where `size` is the number of terms per cluster in `ccr@compareClusterResult`.
-#'   - `width`: if `ccr` is `NULL`, `2`; otherwise `length(size) * 0.6 + 7`,
-#'     where `length(size)` is the number of clusters with at least one term.
-#'
-#' @details
-#' 1. If `ccr` is `NULL`, returns `c(2, 2)`.
-#' 2. Otherwise:
-#'    - Extract `ccr@compareClusterResult$Cluster` to tabulate how many terms (rows) belong to each cluster.
-#'    - Cap each cluster’s row count at 5 via `pmin(5, size)`.
-#'    - Compute:
-#'      `height = sum(pmin(5, size)) * 0.15 + 3`,
-#'      `width  = length(size) * 0.6 + 7`, where `size` excludes clusters with zero terms.
-#'
-#' @examples
-#' \dontrun{
-#' dims1 <- get_dit_plot_size(ccr) # for a valid compareClusterResult
-#' dims2 <- get_dit_plot_size(NULL) # returns c(2, 2)
-#' }
-#'
-#' @seealso \code{\link{dotplot}}
-#' @export
-get_dit_plot_size <- function(ccr) {
-  # If NULL, return default (2, 2)
-  if (is.null(ccr)) {
-    return(c(2, 2))
-  }
-  # Extract cluster assignments for each term
-  clust_tbl <- table(ccr@compareClusterResult$Cluster)
-  # Keep clusters with at least one term
-  size <- clust_tbl[clust_tbl > 0]
-  # Compute height: sum of min(5, size) * 0.15 + 3
-  height <- sum(pmin(5, size)) * 0.15 + 3
-  # Compute width: number of clusters * 0.6 + 7
-  width <- length(size) * 0.6 + 7
-  c(height = height, width = width)
-}
-
 
 #' Compute pairwise correlation statistics between matrix columns
 #'
@@ -2992,107 +2933,6 @@ my_cor_test <- function(x, y = NULL, ...) {
   return(list(e = e_mat, n = n_mat, p = p_mat))
 }
 
-
-#' Annotate exons with splice site sequences from a FASTA
-#'
-#' For each exon entry in a GTF data.frame, this function assigns:
-#'   - `exon_number`: position of the exon in the transcript (1-based),
-#'   - `transc_exon_count`: total number of exons in the transcript,
-#'   - `asite`: sequence around the acceptor site,
-#'   - `dsite`: sequence around the donor site.
-#'
-#' @param gtf A data.frame of GTF entries with columns:
-#'   - `transcript_id` (identifier for each transcript),
-#'   - `feature` (e.g., `"exon"`),
-#'   - `chr_id` (chromosome),
-#'   - `start`, `stop` (numeric genomic coordinates),
-#'   - `strand` (`"+"`, `"-"`, or `"*"`).
-#'   Rows may include non-exon features; only rows where `feature == "exon"` will receive exon numbers.
-#' @param fa A named list of DNAString objects (FASTA) indexed by chromosome (matching `chr_id`),
-#'   suitable for extracting sequence via `get_site_seq()`.
-#'
-#' @return The input `gtf` data.frame with added columns:
-#'   - `exon_number`: integer index of the exon within its transcript (NA if not an exon),
-#'   - `transc_exon_count`: total exons in that transcript (NA if not an exon),
-#'   - `asite`: string sequence flanking the acceptor (5′) splice site (NA if not an exon),
-#'   - `dsite`: string sequence flanking the donor (3′) splice site (NA if not an exon).
-#'
-#' @details
-#' 1. Splits `gtf` by `transcript_id`.
-#' 2. For each transcript:
-#'    - Orders rows by `start` ascending (if `strand == "+"`) or descending (if `"-"`).
-#'    - For rows with `feature == "exon"`, assigns `exon_number` from 1 to `n_exons` and
-#'      sets `transc_exon_count = n_exons`.
-#' 3. Initializes `asite` and `dsite` as `NA`.
-#' 4. For exonic rows (`feature == "exon"`):
-#'    - If `strand == "+"`,
-#'      - `asite <- get_site_seq(chr_id, start, mars = c(12, 5), fa, rev = FALSE)`,
-#'      - `dsite <- get_site_seq(chr_id, stop,  mars = c(3, 5), fa, rev = FALSE)`.
-#'    - If `strand == "-"`,
-#'      - `asite <- get_site_seq(chr_id, stop,  mars = c(5, 12), fa, rev = TRUE)`,
-#'      - `dsite <- get_site_seq(chr_id, start, mars = c(5, 3),  fa, rev = TRUE)`.
-#'
-#' @seealso \code{\link{get_site_seq}}
-#' @export
-annotate_exons <- function(gtf, fa) {
-  # Preserve original row order via index
-  gtf$inx <- seq_len(nrow(gtf))
-
-  # Split GTF by transcript_id
-  split_list <- split(gtf, gtf$transcript_id)
-
-  # Process each transcript
-  split_list <- lapply(split_list, function(df) {
-    # Determine exon rows
-    exon_mask <- df$feature == "exon"
-    if (any(exon_mask)) {
-      # Order exons by start, adjusting for strand
-      if (all(df$strand[exon_mask] == "-")) {
-        exon_order <- order(df$start[exon_mask], decreasing = TRUE)
-      } else {
-        exon_order <- order(df$start[exon_mask])
-      }
-      n_exons <- sum(exon_mask)
-      # Assign exon_number and transc_exon_count
-      df$exon_number[exon_mask] <- seq_len(n_exons)[exon_order]
-      df$transc_exon_count[exon_mask] <- n_exons
-    }
-    return(df)
-  })
-
-  # Recombine and restore original order
-  gtf <- do.call(rbind, split_list)
-  gtf <- gtf[order(gtf$inx), ]
-  gtf$inx <- NULL
-
-  # Initialize asite and dsite
-  gtf$asite <- NA_character_
-  gtf$dsite <- NA_character_
-
-  # Compute splice site sequences for each exon row
-  exon_idx <- which(gtf$feature == "exon")
-  for (i in exon_idx) {
-    chr <- gtf$chr_id[i]
-    pos1 <- gtf$start[i]
-    pos2 <- gtf$stop[i]
-    strand <- gtf$strand[i]
-    if (strand == "+") {
-      # Acceptor: 12 bp upstream, 5 bp downstream of start
-      gtf$asite[i] <- get_site_seq(chr, pos1, mars = c(12, 5), fa, rev = FALSE)
-      # Donor: 3 bp upstream, 5 bp downstream of stop
-      gtf$dsite[i] <- get_site_seq(chr, pos2, mars = c(3, 5), fa, rev = FALSE)
-    } else if (strand == "-") {
-      # Acceptor (reverse): 5 bp upstream, 12 bp downstream of stop
-      gtf$asite[i] <- get_site_seq(chr, pos2, mars = c(5, 12), fa, rev = TRUE)
-      # Donor (reverse): 5 bp upstream, 3 bp downstream of start
-      gtf$dsite[i] <- get_site_seq(chr, pos1, mars = c(5, 3), fa, rev = TRUE)
-    }
-  }
-
-  return(gtf)
-}
-
-
 #' Extract sequence around a splice site from a genomic FASTA
 #'
 #' Retrieves a nucleotide sequence flanking a specified genomic position for one or more loci.
@@ -3166,6 +3006,104 @@ get_site_seq <- function(chr, pos, mars, fa, rev = FALSE, as_string = TRUE, to_u
   }
 }
 
+#' Annotate exons with splice site sequences from a FASTA
+#'
+#' For each exon entry in a GTF data.frame, this function assigns:
+#'   - `exon_number`: position of the exon in the transcript (1-based),
+#'   - `transc_exon_count`: total number of exons in the transcript,
+#'   - `asite`: sequence around the acceptor site,
+#'   - `dsite`: sequence around the donor site.
+#'
+#' @param gtf A data.frame of GTF entries with columns:
+#'   - `transcript_id` (identifier for each transcript),
+#'   - `feature` (e.g., `"exon"`),
+#'   - `chr_id` (chromosome),
+#'   - `start`, `stop` (numeric genomic coordinates),
+#'   - `strand` (`"+"`, `"-"`, or `"*"`).
+#'   Rows may include non-exon features; only rows where `feature == "exon"` will receive exon numbers.
+#' @param fa A named list of DNAString objects (FASTA) indexed by chromosome (matching `chr_id`),
+#'   suitable for extracting sequence via `get_site_seq()`.
+#'
+#' @return The input `gtf` data.frame with added columns:
+#'   - `exon_number`: integer index of the exon within its transcript (NA if not an exon),
+#'   - `transc_exon_count`: total exons in that transcript (NA if not an exon),
+#'   - `asite`: string sequence flanking the acceptor (5′) splice site (NA if not an exon),
+#'   - `dsite`: string sequence flanking the donor (3′) splice site (NA if not an exon).
+#'
+#' @details
+#' 1. Splits `gtf` by `transcript_id`.
+#' 2. For each transcript:
+#'    - Orders rows by `start` ascending (if `strand == "+"`) or descending (if `"-"`).
+#'    - For rows with `feature == "exon"`, assigns `exon_number` from 1 to `n_exons` and
+#'      sets `transc_exon_count = n_exons`.
+#' 3. Initializes `asite` and `dsite` as `NA`.
+#' 4. For exonic rows (`feature == "exon"`):
+#'    - If `strand == "+"`,
+#'      - `asite <- get_site_seq(chr_id, start, mars = c(12, 5), fa, rev = FALSE)`,
+#'      - `dsite <- get_site_seq(chr_id, stop,  mars = c(3, 5), fa, rev = FALSE)`.
+#'    - If `strand == "-"`,
+#'      - `asite <- get_site_seq(chr_id, stop,  mars = c(5, 12), fa, rev = TRUE)`,
+#'      - `dsite <- get_site_seq(chr_id, start, mars = c(5, 3),  fa, rev = TRUE)`.
+#'
+#' @seealso \code{\link{get_site_seq}}
+#' @export
+annotate_exons <- function(gtf, fa) {
+  # Preserve original row order via index
+  gtf$inx <- seq_len(nrow(gtf))
+
+  # Split GTF by transcript_id
+  split_list <- split(gtf, gtf$transcript_id)
+
+  # Process each transcript
+  split_list <- lapply(split_list, function(df) {
+    # Determine exon rows
+    exon_mask <- df$feature == "exon"
+    if (any(exon_mask)) {
+      # Order exons by start, adjusting for strand
+      if (all(df$strand[exon_mask] == "-")) {
+        exon_order <- order(df$start[exon_mask], decreasing = TRUE)
+      } else {
+        exon_order <- order(df$start[exon_mask])
+      }
+      n_exons <- sum(exon_mask)
+      # Assign exon_number and transc_exon_count
+      df$exon_number[exon_mask] <- seq_len(n_exons)[exon_order]
+      df$transc_exon_count[exon_mask] <- n_exons
+    }
+    df
+  })
+
+  # Recombine and restore original order
+  gtf <- do.call(rbind, split_list)
+  gtf <- gtf[order(gtf$inx), ]
+  gtf$inx <- NULL
+
+  # Initialize asite and dsite
+  gtf$asite <- NA_character_
+  gtf$dsite <- NA_character_
+
+  # Compute splice site sequences for each exon row
+  exon_idx <- which(gtf$feature == "exon")
+  for (i in exon_idx) {
+    chr <- gtf$chr_id[i]
+    pos1 <- gtf$start[i]
+    pos2 <- gtf$stop[i]
+    strand <- gtf$strand[i]
+    if (strand == "+") {
+      # Acceptor: 12 bp upstream, 5 bp downstream of start
+      gtf$asite[i] <- get_site_seq(chr, pos1, mars = c(12, 5), fa, rev = FALSE)
+      # Donor: 3 bp upstream, 5 bp downstream of stop
+      gtf$dsite[i] <- get_site_seq(chr, pos2, mars = c(3, 5), fa, rev = FALSE)
+    } else if (strand == "-") {
+      # Acceptor (reverse): 5 bp upstream, 12 bp downstream of stop
+      gtf$asite[i] <- get_site_seq(chr, pos2, mars = c(5, 12), fa, rev = TRUE)
+      # Donor (reverse): 5 bp upstream, 3 bp downstream of start
+      gtf$dsite[i] <- get_site_seq(chr, pos1, mars = c(5, 3), fa, rev = TRUE)
+    }
+  }
+  gtf
+}
+
 #' Plot sequence logo from aligned sequences
 #'
 #' Generates a sequence logo from a set of aligned nucleotide sequences, using information content.
@@ -3197,7 +3135,6 @@ plot_logo <- function(seq, stack_height = DiffLogo::informationContent, ...) {
   pwm <- DiffLogo::getPwmFromAlignment(clean_seq)
   DiffLogo::seqLogo(pwm, stack_height = stack_height, ...)
 }
-
 
 #' Compute reverse complement of DNA sequences
 #'
@@ -3231,7 +3168,6 @@ rcomp <- function(x) {
   # Convert back to character vector
   as.character(rc_set)
 }
-
 
 #' Shuffle DNA sequences by k‐mer permutation
 #'
@@ -3271,7 +3207,6 @@ shuffle <- function(seqs, k = 1, ...) {
   # Convert back to character vector
   as.character(shuffled_set)
 }
-
 
 #' Find reverse‐complement palindrome regions in a sequence
 #'
@@ -3394,12 +3329,11 @@ find_rcomp_regions <- function(seq, n = 1, shuffle_times = 0, start = 0) {
   return(rc_matches_clean)
 }
 
-
 #' Compute k-mer frequencies from a set of sequences
 #'
 #' Counts occurrences of all k-mers of length `k` across a vector of DNA sequences.
 #'
-#' @param seqs A character vector of nucleotide sequences (may include `NA`), all in uppercase.
+#' @param seqs Character vector of nucleotide sequences (may include `NA`), all in uppercase.
 #' @param k Integer; length of k-mers to tally. Default is 1.
 #'
 #' @return A named numeric vector of k-mer counts, where names are k-mer strings and values
@@ -3435,7 +3369,6 @@ kmer_f <- function(seqs, k = 1) {
   tbl <- table(kmers)
   stats::setNames(as.numeric(tbl), names(tbl))
 }
-
 
 #' Find matches or reverse-complement matches of a pattern in a sequence
 #'

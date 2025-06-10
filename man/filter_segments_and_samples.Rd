@@ -18,40 +18,45 @@ filter_segments_and_samples(
 )
 }
 \arguments{
-\item{pbas}{A \code{SummarizedExperiment} where each row is a segment and each column is a pseudobulk.
-Must contain assays named “i” (inclusion) and “e” (exclusion).
+\item{pbas}{SummarizedExperiment: each row is a segment and each column is a pseudobulk.
+Must contain assays named \code{i} (inclusion) and \code{e} (exclusion).
 Rows correspond to segments; columns correspond to samples/pseudobulks.}
 
-\item{sample_filter}{Logical vector (length = number of columns in \code{pbas}) indicating which samples to retain initially.
-Defaults to \code{TRUE} for all samples.}
+\item{sample_filter}{Logical vector (length = number of columns in \code{pbas}): indicates which samples to retain initially.
+Defaults: \code{TRUE} for all samples.}
 
-\item{sites}{Character vector of splice‐site patterns to keep (e.g., \code{c("ad", "aa", "dd")}). Only segments whose \code{rowData(pbas)$sites} is in this set will be retained.}
+\item{sites}{Character vector: splice‐site patterns to keep (e.g., \code{c("ad", "aa", "dd")}).
+Only segments whose \code{rowData(pbas)$sites} is in this set will be retained.}
 
-\item{min_cov}{Minimum total junction coverage (\code{i + e}) for a pseudobulk to count toward segment inclusion. Default 10.}
+\item{min_cov}{Integer: minimum total junction coverage (\code{i + e}) for a pseudobulk to count toward segment inclusion. Default 10.}
 
-\item{sample_min_ncells}{Minimum number of cells per pseudobulk; pseudobulk samples with fewer cells are filtered out. Default 20.}
+\item{sample_min_ncells}{Integer: minimum number of cells per pseudobulk; pseudobulk samples with fewer cells are filtered out. Default 20.}
 
-\item{celltype_min_samples}{Minimum number of pseudobulk samples per group (as defined by \code{groupby}) to keep that group. Default 2.}
+\item{celltype_min_samples}{Integer: minimum number of pseudobulk samples per group (as defined by \code{groupby}) to keep that group. Default 2.}
 
-\item{seg_min_samples}{The absolute minimum number of pseudobulks (after filtering by \code{min_cov}) that a segment must be observed in. Default 4.}
+\item{seg_min_samples}{Integer: the absolute minimum number of pseudobulks (after filtering by \code{min_cov}) that a segment must be observed in. Default 4.}
 
-\item{seg_min_samples_fraq}{Minimum fraction of total pseudobulk samples that must meet \code{min_cov} for a segment to be retained. Default 0.2.
+\item{seg_min_samples_fraq}{Numeric: minimum fraction of total pseudobulk samples that must meet \code{min_cov} for a segment to be retained. Default 0.2.
 The effective minimum samples per segment is \code{max(seg_min_samples, ncol(pbas) * seg_min_samples_fraq)}.}
 
-\item{seg_min_sd}{Minimum standard deviation of PSI (percent spliced‐in) across pseudobulks for a segment to be retained. Default 0.1.}
+\item{seg_min_sd}{Numeric: Minimum standard deviation of PSI (percent spliced‐in) across pseudobulks for a segment to be retained. Default 0.1.}
 
-\item{groupby}{Either (a) a character vector of length \code{ncol(pbas)} giving an existing grouping factor for each column, or
-(b) a character scalar or vector of column names in \code{colData(pbas)} whose pasted‐together values define the grouping factor.
-See \verb{\link{get_groupby_factor}} for details.}
+\item{groupby}{Either
+\itemize{
+\item a character vector of length \code{ncol(pbas)} giving an existing grouping factor for each column, or
+\item a character scalar or vector of column names in \code{colData(pbas)} whose pasted‐together values define the grouping factor.
+See \verb{\link{get_groupby_factor}} for details.
+}}
 }
 \value{
-A filtered \code{SummarizedExperiment}, containing only those pseudobulks and segments that satisfy all criteria.
-The returned object will always have assays “i”, “e” converted to dense matrices, and will include a “psi” assay (percent spliced‐in) for each retained segment/samples.
-The \code{rowData} will also contain a column “nna” (number of pseudobulks with \code{i+e >= min_cov}) and “sd” (standard deviation of PSI).
+SummarizedExperiment: containing only those pseudobulks and segments that satisfy all criteria.
+The returned object always have assays \code{i}, \code{e} converted to dense matrices,
+and include a \code{psi} assay (percent spliced‐in) for each retained segment/samples.
+The \code{rowData} also contain a column \code{nna} (number of pseudobulks with \code{i+e >= min_cov}) and \code{sd} (standard deviation of PSI).
 }
 \description{
 This function takes a \code{SummarizedExperiment} containing alternative splicing data
-(with assays “i” for inclusion counts and “e” for exclusion counts), and filters out:
+(with assays \code{i} for inclusion counts and \code{e} for exclusion counts), and filters out:
 \enumerate{
 \item pseudobulk samples with fewer than \code{sample_min_ncells} cells,
 \item cell‐type groups with fewer than \code{celltype_min_samples} samples,
@@ -76,4 +81,8 @@ filtered_se <- filter_segments_and_samples(
 )
 head(filtered_se)
 }
+
+}
+\seealso{
+\code{\link{get_groupby_factor}}
 }
