@@ -13,7 +13,6 @@ Depends:
 LazyData: true
 Imports:
     Biostrings,
-    DiffLogo,
     GenomicRanges,
     IRanges,
     Matrix,
@@ -22,7 +21,6 @@ Imports:
     graphics,
     plotCoverage,
     plyr,
-    universalmotif,
     visutils
 Suggests:
     DOSE
