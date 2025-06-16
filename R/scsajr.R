@@ -345,7 +345,7 @@ rbind_matrix <- function(mat_list, colnames_union = NULL) {
   adjusted_list <- lapply(mat_list, function(mat) {
     # Coerce to sparse dgCMatrix if not already
     if (!inherits(mat, "dgCMatrix")) {
-      mat <- Matrix::Matrix(as.matrix(mat), sparse = TRUE)
+      mat <- methods::as(mat, "dgCMatrix")
     }
     missing_cols <- setdiff(colnames_union, colnames(mat))
     if (length(missing_cols) > 0) {
@@ -1412,7 +1412,7 @@ filter_segments_and_samples <- function(
 
   # 'nna' = number of pseudobulks with total coverage >= min_cov
   SummarizedExperiment::rowData(pbas)$nna <- Matrix::rowSums((SummarizedExperiment::assay(pbas, "i")
-                                                            + SummarizedExperiment::assay(pbas, "e")) >= min_cov)
+  + SummarizedExperiment::assay(pbas, "e")) >= min_cov)
 
 
   ## 3. Filter out segments (rows) that do not meet minimum coverage across pseudobulks
