@@ -1288,8 +1288,8 @@ find_marker_as <- function(
     # Fit GLM per segment; return a data.frame with columns: overdispersion and 'group' p‐value
     glm_res <- fit_as_glm(
       pbas       = pbas,
-      formula    = x ~ f,
-      data_terms = list(f = f),
+      formula    = x ~ group,
+      data_terms = list(group = f),
       return_pv  = TRUE,
       parallel   = parallel
     )
