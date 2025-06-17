@@ -662,7 +662,7 @@ qbinom_lrt <- function(
   if (!overdisp) {
     disp_used <- 1
   }
-  result[1] <- disp_used
+  result[1] <- disp_est
 
   # Run ANOVA (Chisq) with specified dispersion; catch errors
   a_tbl <- tryCatch(
@@ -1052,16 +1052,11 @@ get_dpsi <- function(data, groupby, min_cov = 50) {
     }
     # Sort by PSI
     sorted_vals <- sort(non_na)
-    low_val <- sorted_vals[1]
-    high_val <- sorted_vals[length(sorted_vals)]
-    # Get group names corresponding to low_val and high_val
-    # 'names(non_na)' holds group labels
-    low_state <- names(non_na)[which(non_na == low_val)[1]]
-    high_state <- names(non_na)[which(non_na == high_val)[1]]
+    # When equal: select one earlier in alphabetical order
     data.frame(
-      low_state = low_state,
-      high_state = high_state,
-      dpsi = high_val - low_val
+      low_state = names(sorted_vals)[1],
+      high_state = names(sorted_vals)[length(sorted_vals)],
+      dpsi = sorted_vals[length(sorted_vals)] - sorted_vals[1]
     )
   })
 
@@ -1119,7 +1114,9 @@ test_all_groups_as <- function(
     return_pv = TRUE,
     parallel = parallel
   )
+
   # pv_df has columns: overdispersion, group (p‐value)
+  pv_df <- SummarizedExperiment::as.data.frame(pv_df, stringsAsFactors = FALSE)
 
   # 3. Adjust p‐values (Benjamini-Hochberg)
   pv_df <- SummarizedExperiment::as.data.frame(pv_df, stringsAsFactors = FALSE)
