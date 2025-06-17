@@ -1404,12 +1404,8 @@ filter_segments_and_samples <- function(
   seg_sel <- SummarizedExperiment::rowData(pbas)$sites %in% sites
   pbas <- pbas[seg_sel, ]
 
-  # Compute, for each segment, how many pseudobulks have (i + e) >= min_cov
-  #   - assay(pbas, "i") and assay(pbas, "e") give inclusion/exclusion counts
-  #   - Convert these to dense matrices to simplify row/column sums
-  SummarizedExperiment::assay(pbas, "i") <- as.matrix(SummarizedExperiment::assay(pbas, "i"))
-  SummarizedExperiment::assay(pbas, "e") <- as.matrix(SummarizedExperiment::assay(pbas, "e"))
-
+  # Compute, for each segment, how many pseudobulks have (i + e) >= min_cov,
+  #   assay(pbas, "i") and assay(pbas, "e") give inclusion/exclusion counts
   # 'nna' = number of pseudobulks with total coverage >= min_cov
   SummarizedExperiment::rowData(pbas)$nna <- Matrix::rowSums((SummarizedExperiment::assay(pbas, "i")
   + SummarizedExperiment::assay(pbas, "e")) >= min_cov)
@@ -1422,6 +1418,10 @@ filter_segments_and_samples <- function(
   min_samples_required <- max(seg_min_samples, ceiling(ncol(pbas) * seg_min_samples_fraq))
   seg_sel2 <- SummarizedExperiment::rowData(pbas)$nna >= min_samples_required
   pbas <- pbas[seg_sel2, ]
+
+  # Densify the matrices
+  SummarizedExperiment::assay(pbas, "i") <- as.matrix(SummarizedExperiment::assay(pbas, "i"))
+  SummarizedExperiment::assay(pbas, "e") <- as.matrix(SummarizedExperiment::assay(pbas, "e"))
 
 
   ## 4. Compute PSI (percent spliced‐in) and filter by segment variability
