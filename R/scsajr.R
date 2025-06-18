@@ -662,7 +662,7 @@ qbinom_lrt <- function(
   if (!overdisp) {
     disp_used <- 1
   }
-  result[1] <- disp_used
+  result[1] <- disp_est
 
   # Run ANOVA (Chisq) with specified dispersion; catch errors
   a_tbl <- tryCatch(
@@ -1052,16 +1052,11 @@ get_dpsi <- function(data, groupby, min_cov = 50) {
     }
     # Sort by PSI
     sorted_vals <- sort(non_na)
-    low_val <- sorted_vals[1]
-    high_val <- sorted_vals[length(sorted_vals)]
-    # Get group names corresponding to low_val and high_val
-    # 'names(non_na)' holds group labels
-    low_state <- names(non_na)[which(non_na == low_val)[1]]
-    high_state <- names(non_na)[which(non_na == high_val)[1]]
+    # When equal: select one earlier in alphabetical order
     data.frame(
-      low_state = low_state,
-      high_state = high_state,
-      dpsi = high_val - low_val
+      low_state = names(sorted_vals)[1],
+      high_state = names(sorted_vals)[length(sorted_vals)],
+      dpsi = sorted_vals[length(sorted_vals)] - sorted_vals[1]
     )
   })
 
@@ -1119,7 +1114,9 @@ test_all_groups_as <- function(
     return_pv = TRUE,
     parallel = parallel
   )
+
   # pv_df has columns: overdispersion, group (p‐value)
+  pv_df <- SummarizedExperiment::as.data.frame(pv_df, stringsAsFactors = FALSE)
 
   # 3. Adjust p‐values (Benjamini-Hochberg)
   pv_df <- SummarizedExperiment::as.data.frame(pv_df, stringsAsFactors = FALSE)
@@ -1291,8 +1288,8 @@ find_marker_as <- function(
     # Fit GLM per segment; return a data.frame with columns: overdispersion and 'group' p‐value
     glm_res <- fit_as_glm(
       pbas       = pbas,
-      formula    = x ~ f,
-      data_terms = list(f = f),
+      formula    = x ~ group,
+      data_terms = list(group = f),
       return_pv  = TRUE,
       parallel   = parallel
     )
@@ -1404,12 +1401,8 @@ filter_segments_and_samples <- function(
   seg_sel <- SummarizedExperiment::rowData(pbas)$sites %in% sites
   pbas <- pbas[seg_sel, ]
 
-  # Compute, for each segment, how many pseudobulks have (i + e) >= min_cov
-  #   - assay(pbas, "i") and assay(pbas, "e") give inclusion/exclusion counts
-  #   - Convert these to dense matrices to simplify row/column sums
-  SummarizedExperiment::assay(pbas, "i") <- as.matrix(SummarizedExperiment::assay(pbas, "i"))
-  SummarizedExperiment::assay(pbas, "e") <- as.matrix(SummarizedExperiment::assay(pbas, "e"))
-
+  # Compute, for each segment, how many pseudobulks have (i + e) >= min_cov,
+  #   assay(pbas, "i") and assay(pbas, "e") give inclusion/exclusion counts
   # 'nna' = number of pseudobulks with total coverage >= min_cov
   SummarizedExperiment::rowData(pbas)$nna <- Matrix::rowSums((SummarizedExperiment::assay(pbas, "i")
   + SummarizedExperiment::assay(pbas, "e")) >= min_cov)
@@ -1422,6 +1415,10 @@ filter_segments_and_samples <- function(
   min_samples_required <- max(seg_min_samples, ceiling(ncol(pbas) * seg_min_samples_fraq))
   seg_sel2 <- SummarizedExperiment::rowData(pbas)$nna >= min_samples_required
   pbas <- pbas[seg_sel2, ]
+
+  # Densify the matrices
+  SummarizedExperiment::assay(pbas, "i") <- as.matrix(SummarizedExperiment::assay(pbas, "i"))
+  SummarizedExperiment::assay(pbas, "e") <- as.matrix(SummarizedExperiment::assay(pbas, "e"))
 
 
   ## 4. Compute PSI (percent spliced‐in) and filter by segment variability
@@ -1715,8 +1712,8 @@ select_all_markers <- function(
   final_df <- do.call(rbind, trimmed_list)
   rownames(final_df) <- final_df$seg_id
 
-  # 6. Re‐order rows by group (alphabetical) then |dpsi| descending
-  final_df <- final_df[order(final_df$group, -abs(final_df$dpsi)), , drop = FALSE]
+  # # 6. Re‐order rows by group (alphabetical) then |dpsi| descending
+  # final_df <- final_df[order(final_df$group, -abs(final_df$dpsi)), , drop = FALSE]
 
   return(final_df)
 }
@@ -1879,26 +1876,26 @@ get_plot_coords_for_seg <- function(sid, pb_all, gene_descr) {
 
   # 2. Extract gene_id from rowRanges
   seg <- SummarizedExperiment::rowRanges(pb_all)
-  gene_id <- seg[sid, "gene_id"]
+  gid <- seg[sid, ]$gene_id
 
   # 3. Determine start coordinate
   if (!is.na(up_id)) {
     # use 50 bp upstream of the upstream exon's start
-    up_start <- stats::start(seg[up_id])
+    up_start <- GenomicRanges::start(seg[up_id])
     start_coord <- up_start - 50
   } else {
     # fallback to gene start
-    start_coord <- gene_descr[gene_id, "start"]
+    start_coord <- gene_descr[gid, "start"]
   }
 
   # 4. Determine stop coordinate
   if (!is.na(down_id)) {
     # use 50 bp upstream of the downstream exon's end
-    down_end <- stats::end(seg[down_id])
+    down_end <- GenomicRanges::end(seg[down_id])
     stop_coord <- down_end - 50
   } else {
     # fallback to gene end
-    stop_coord <- gene_descr[gene_id, "end"]
+    stop_coord <- gene_descr[gid, "end"]
   }
 
   list(start = start_coord, stop = stop_coord)
@@ -1978,7 +1975,7 @@ sum_covs <- function(cov_list) {
   # Ensure row names of all_juncs match original junction IDs if present
   # We'll use the original row names from r$juncs for those rows that match exactly.
   # But to maintain compatibility, we'll set row names to the coordinate string.
-  rownames(all_juncs) <- apply(all_juncs, 1, function(row) paste(row, collapse = ":"))
+  rownames(all_juncs) <- apply(all_juncs, 1, function(row) paste(row, collapse = "-"))
 
   # 3. Initialize scores to zero
   all_juncs$score <- rep(0, nrow(all_juncs))
@@ -1987,6 +1984,9 @@ sum_covs <- function(cov_list) {
   #    Map r$juncs rows into all_juncs
   #    If r$juncs row names differ from the coordinate-based rownames(all_juncs),
   #    assume rownames(r$juncs) match the coordinate paste
+  extra_cols <- r$juncs[, c("width", "strand", "plus_score", "minus_score"), drop = FALSE]
+  all_juncs[rownames(extra_cols), colnames(extra_cols)] <- extra_cols
+
   matching_r <- intersect(rownames(all_juncs), rownames(r$juncs))
   if (length(matching_r) > 0) {
     all_juncs[matching_r, "score"] <-
@@ -2182,9 +2182,11 @@ plot_segment_coverage <- function(
   # 2. PSI preparation if sid + data_as provided
   psi <- NULL
   if (!is.null(sid) && !is.null(data_as)) {
-    # Construct group factor
+    # Construct group factor and gene_id
     seg <- SummarizedExperiment::as.data.frame(SummarizedExperiment::rowRanges(data_as))
     group_factor_as <- get_groupby_factor(data_as, groupby)
+    gid <- seg[sid, "gene_id"]
+
     # Subset data_as to only this segment
     se_seg <- data_as[sid, ]
     # Compute PSI array for this segment
@@ -2200,10 +2202,8 @@ plot_segment_coverage <- function(
 
   # 3. CPM preparation if data_ge provided
   cpm <- NULL
-  gid <- NULL
   if (!is.null(data_ge) && !is.null(data_as) && !is.null(sid)) {
     group_factor_ge <- get_groupby_factor(data_ge, groupby)
-    gid <- seg[sid, "gene_id"]
     cpm_vals <- visutils::log10p1(SummarizedExperiment::assay(data_ge, "cpm")[gid, ])
     cpm <- split(cpm_vals, group_factor_ge)[names(psi)]
   }
@@ -2272,15 +2272,16 @@ plot_segment_coverage <- function(
   }
 
   # 10. Coverage and junction plotting per group
+  bams <- unique(samples[, c("sample_id", "bam_path")])
   graphics::par(mar = c(0, 6, 1.1, 0), xpd = FALSE)
   for (ct in celltypes) {
     cov <- covs[[ct]]
     # Load coverage if missing or range incomplete
     if (is.null(cov) || start < cov$start || stop > cov$end) {
       cov <- list()
-      for (i in seq_len(nrow(samples))) {
-        sample_id <- samples$sample_id[i]
-        bam_path <- samples$bam_path[i]
+      for (i in seq_len(nrow(bams))) {
+        sample_id <- bams$sample_id[i]
+        bam_path <- bams$bam_path[i]
         tags <- barcodes$barcode[barcodes$sample_id == sample_id & !is.na(barcodes[, groupby]) & barcodes[, groupby] == ct]
         if (length(tags) == 0) next
         cov[[length(cov) + 1]] <- plotCoverage::getReadCoverage(bam_path, chr, start, stop, strand = NA, scanBamFlags = scan_bam_flags, tagFilter = list(CB = tags))
