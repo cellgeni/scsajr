@@ -1876,26 +1876,26 @@ get_plot_coords_for_seg <- function(sid, pb_all, gene_descr) {
 
   # 2. Extract gene_id from rowRanges
   seg <- SummarizedExperiment::rowRanges(pb_all)
-  gene_id <- seg[sid, "gene_id"]
+  gid <- seg[sid, ]$gene_id
 
   # 3. Determine start coordinate
   if (!is.na(up_id)) {
     # use 50 bp upstream of the upstream exon's start
-    up_start <- stats::start(seg[up_id])
+    up_start <- GenomicRanges::start(seg[up_id])
     start_coord <- up_start - 50
   } else {
     # fallback to gene start
-    start_coord <- gene_descr[gene_id, "start"]
+    start_coord <- gene_descr[gid, "start"]
   }
 
   # 4. Determine stop coordinate
   if (!is.na(down_id)) {
     # use 50 bp upstream of the downstream exon's end
-    down_end <- stats::end(seg[down_id])
+    down_end <- GenomicRanges::end(seg[down_id])
     stop_coord <- down_end - 50
   } else {
     # fallback to gene end
-    stop_coord <- gene_descr[gene_id, "end"]
+    stop_coord <- gene_descr[gid, "end"]
   }
 
   list(start = start_coord, stop = stop_coord)
@@ -1975,7 +1975,7 @@ sum_covs <- function(cov_list) {
   # Ensure row names of all_juncs match original junction IDs if present
   # We'll use the original row names from r$juncs for those rows that match exactly.
   # But to maintain compatibility, we'll set row names to the coordinate string.
-  rownames(all_juncs) <- apply(all_juncs, 1, function(row) paste(row, collapse = ":"))
+  rownames(all_juncs) <- apply(all_juncs, 1, function(row) paste(row, collapse = "-"))
 
   # 3. Initialize scores to zero
   all_juncs$score <- rep(0, nrow(all_juncs))
@@ -1984,6 +1984,9 @@ sum_covs <- function(cov_list) {
   #    Map r$juncs rows into all_juncs
   #    If r$juncs row names differ from the coordinate-based rownames(all_juncs),
   #    assume rownames(r$juncs) match the coordinate paste
+  extra_cols <- r$juncs[, c("width", "strand", "plus_score", "minus_score"), drop = FALSE]
+  all_juncs[rownames(extra_cols), colnames(extra_cols)] <- extra_cols
+
   matching_r <- intersect(rownames(all_juncs), rownames(r$juncs))
   if (length(matching_r) > 0) {
     all_juncs[matching_r, "score"] <-
@@ -2179,9 +2182,11 @@ plot_segment_coverage <- function(
   # 2. PSI preparation if sid + data_as provided
   psi <- NULL
   if (!is.null(sid) && !is.null(data_as)) {
-    # Construct group factor
+    # Construct group factor and gene_id
     seg <- SummarizedExperiment::as.data.frame(SummarizedExperiment::rowRanges(data_as))
     group_factor_as <- get_groupby_factor(data_as, groupby)
+    gid <- seg[sid, "gene_id"]
+
     # Subset data_as to only this segment
     se_seg <- data_as[sid, ]
     # Compute PSI array for this segment
@@ -2197,10 +2202,8 @@ plot_segment_coverage <- function(
 
   # 3. CPM preparation if data_ge provided
   cpm <- NULL
-  gid <- NULL
   if (!is.null(data_ge) && !is.null(data_as) && !is.null(sid)) {
     group_factor_ge <- get_groupby_factor(data_ge, groupby)
-    gid <- seg[sid, "gene_id"]
     cpm_vals <- visutils::log10p1(SummarizedExperiment::assay(data_ge, "cpm")[gid, ])
     cpm <- split(cpm_vals, group_factor_ge)[names(psi)]
   }
@@ -2269,15 +2272,16 @@ plot_segment_coverage <- function(
   }
 
   # 10. Coverage and junction plotting per group
+  bams <- unique(samples[, c("sample_id", "bam_path")])
   graphics::par(mar = c(0, 6, 1.1, 0), xpd = FALSE)
   for (ct in celltypes) {
     cov <- covs[[ct]]
     # Load coverage if missing or range incomplete
     if (is.null(cov) || start < cov$start || stop > cov$end) {
       cov <- list()
-      for (i in seq_len(nrow(samples))) {
-        sample_id <- samples$sample_id[i]
-        bam_path <- samples$bam_path[i]
+      for (i in seq_len(nrow(bams))) {
+        sample_id <- bams$sample_id[i]
+        bam_path <- bams$bam_path[i]
         tags <- barcodes$barcode[barcodes$sample_id == sample_id & !is.na(barcodes[, groupby]) & barcodes[, groupby] == ct]
         if (length(tags) == 0) next
         cov[[length(cov) + 1]] <- plotCoverage::getReadCoverage(bam_path, chr, start, stop, strand = NA, scanBamFlags = scan_bam_flags, tagFilter = list(CB = tags))
