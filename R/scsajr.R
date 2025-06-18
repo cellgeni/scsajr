@@ -1712,8 +1712,8 @@ select_all_markers <- function(
   final_df <- do.call(rbind, trimmed_list)
   rownames(final_df) <- final_df$seg_id
 
-  # 6. Re‐order rows by group (alphabetical) then |dpsi| descending
-  final_df <- final_df[order(final_df$group, -abs(final_df$dpsi)), , drop = FALSE]
+  # # 6. Re‐order rows by group (alphabetical) then |dpsi| descending
+  # final_df <- final_df[order(final_df$group, -abs(final_df$dpsi)), , drop = FALSE]
 
   return(final_df)
 }
