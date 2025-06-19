@@ -2837,7 +2837,7 @@ plot_mds <- function(xy, celltypes, ct2col, samples, ...) {
     idx <- which(celltypes == ct)
     centroid_x <- mean(xy[idx, 1])
     centroid_y <- mean(xy[idx, 2])
-    graphics::text(centroid_x, centroid_y, labels = ct, col = ct2col[ct], cex = 1)
+    graphics::text(centroid_x, centroid_y, labels = ct, cex = 1)
   }
 
   invisible(NULL)
