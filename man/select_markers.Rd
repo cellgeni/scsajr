@@ -68,12 +68,14 @@ where \code{abs(dpsi)} is maximal across groups, removing duplicates.
 Finally, it re‐orders \code{res} by \code{abs(dpsi)} in descending order and returns it.
 }
 \examples{
+\dontrun{
 # Load example data
 data(pbasf)
 
 # Select top 10 markers with stricter thresholds:
 df <- select_markers(pbasf@metadata$markers, n = 10, fdr_thr = 0.01, dpsi_thr = 0.2)
 head(df)
+}
 
 }
 \seealso{

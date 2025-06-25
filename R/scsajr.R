@@ -1,9 +1,5 @@
 #!/usr/bin/env Rscript
 
-# Need to add package description
-# Need to figureout how to keep links in the Roxygen documentation
-
-
 ###### prepare_reference.R ######
 
 #' Annotate coding status of segments using a GTF file
@@ -1484,12 +1480,14 @@ filter_segments_and_samples <- function(
 #' Finally, it re‐orders `res` by `abs(dpsi)` in descending order and returns it.
 #'
 #' @examples
+#' \dontrun{
 #' # Load example data
 #' data(pbasf)
 #'
 #' # Select top 10 markers with stricter thresholds:
 #' df <- select_markers(pbasf@metadata$markers, n = 10, fdr_thr = 0.01, dpsi_thr = 0.2)
 #' head(df)
+#' }
 #'
 #' @seealso \code{\link{find_marker_as}}, \code{\link{test_all_groups_as}}, \code{\link{test_pair_as}}
 #' @export

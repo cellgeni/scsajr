@@ -19,6 +19,7 @@ Imports:
     S4Vectors,
     SummarizedExperiment,
     graphics,
+    methods,
     plotCoverage,
     plyr,
     visutils
