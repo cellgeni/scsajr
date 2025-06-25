@@ -6,7 +6,7 @@ Utility Functions used in cellgeni/nf-scsajr Nextflow Pipeline.
 This package includes R functions used in cellgeni/nf-scsajr nextflow pieline,
     which quantifies alternative splicing in single-cell transciptome data.
 
-Please check: `https://github.com/cellgeni/nf-scsajr`
+Please check: [cellgeni/nf-scsajr](https://github.com/cellgeni/nf-scsajr)
 
 ## Installation
 
