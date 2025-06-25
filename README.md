@@ -1,10 +1,12 @@
 
 # scsajr
 
-<!-- badges: start -->
-<!-- badges: end -->
+Utility Functions used in cellgeni/nf-scsajr Nextflow Pipeline.
 
-The goal of scsajr is to ...
+This package includes R functions used in cellgeni/nf-scsajr nextflow pieline,
+    which quantifies alternative splicing in single-cell transciptome data.
+
+Please check: `https://github.com/cellgeni/nf-scsajr`
 
 ## Installation
 
@@ -12,15 +14,5 @@ You can install the development version of scsajr from [GitHub](https://github.c
 
 ``` r
 # install.packages("pak")
-pak::pak("cellgeni/scsajr")
+pak::pak("github::cellgeni/scsajr")
 ```
-
-## Example
-
-This is a basic example which shows you how to solve a common problem:
-
-``` r
-library(scsajr)
-## basic example code
-```
-

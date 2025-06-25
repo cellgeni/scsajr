@@ -1,9 +1,13 @@
 Package: scsajr
-Title: What the Package Does (One Line, Title Case)
+Title: Utility Functions used in cellgeni/nf-scsajr Nextflow Pipeline
 Version: 0.0.0.9000
-Authors@R: 
-    person("First", "Last", , "first.last@example.com", role = c("aut", "cre"))
-Description: What the package does (one paragraph).
+Authors@R: c(
+        person("Akito", "Shima", email = "as82@sanger.ac.uk", role = c("aut"), comment = c(ORCID = "0000-0002-7092-7720")),
+        person("Pasha", "Mazin", email = "pm19@sanger.ac.uk", role = c("aut", "cre"), comment = c(ORCID = "0000-0001-9268-3352"))
+            )
+Description: This package includes R functions used in cellgeni/nf-scsajr nextflow pieline,
+    which quantifies alternative splicing in single-cell transciptome data.
+URL: https://github.com/cellgeni/scsajr, https://github.com/cellgeni/nf-scsajr
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
