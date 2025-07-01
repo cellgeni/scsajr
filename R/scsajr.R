@@ -1676,7 +1676,10 @@ select_all_markers <- function(
     clean_duplicates = TRUE
   )
   # Add a column to flag these as true markers
-  per_group_df$is_marker <- TRUE
+  per_group_df$is_marker <- logical(nrow(per_group_df))
+  if (nrow(per_group_df) > 0) {
+    per_group_df$is_marker[] <- TRUE
+  }
 
   # 2. Fetch all‐groups background markers
   background_df <- select_markers_from_all_celltype_test(
@@ -1686,7 +1689,10 @@ select_all_markers <- function(
   )
   # Rename 'seg_id' column consistently
   # (select_markers_from_all_celltype_test already has seg_id and group)
-  background_df$is_marker <- FALSE
+  background_df$is_marker <- logical(nrow(background_df))
+  if (nrow(background_df) > 0) {
+    background_df$is_marker[] <- FALSE
+  }
 
   # 3. Exclude any segments already in per_group_df
   bg_keep <- setdiff(background_df$seg_id, per_group_df$seg_id)
@@ -1694,6 +1700,10 @@ select_all_markers <- function(
 
   # 4. Combine the two sets
   combined <- rbind(per_group_df, background_df)
+  # Return empty data.frame if no markers
+  if (nrow(combined) == 0) {
+    return(combined)
+  }
 
   # 5. For each group, limit to top 'n' by |dpsi|
   # Split by group
