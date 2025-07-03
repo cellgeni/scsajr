@@ -2669,8 +2669,7 @@ marker_heatmap <- function(
     widths = c(1, 1)
   )
   graphics::par(
-    bty = "n", tcl = -0.2, mgp = c(1.3, 0.3, 0), mar = c(0, 0.5, 0, 0),
-    oma = c(6, 34, 3, 1), xpd = NA
+    bty = "n", tcl = -0.2, mgp = c(1.3, 0.3, 0)
   )
 
   # 8a. PSI heatmap
