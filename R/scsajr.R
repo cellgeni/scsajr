@@ -2264,7 +2264,7 @@ plot_segment_coverage <- function(
   if (ncol(layout_matrix) > 1) {
     layout_matrix[nrow(layout_matrix), -ncol(layout_matrix)] <- max(layout_matrix) + 1
   }
-  graphics::layout(layout_matrix, widths = c(rep(1, ncol(layout_matrix) - 1), 3), heights = c(rep(1, nrow(layout_matrix) - 1), 4))
+  graphics::layout(layout_matrix, widths = c(rep(1, ncol(layout_matrix) - 1), 3), heights = c(rep(1, nrow(layout_matrix) - 1), 5))
   graphics::par(bty = "n", tcl = -0.2, mgp = c(1.3, 0.3, 0), mar = c(0, 0.5, 0, 0), oma = oma, xpd = NA)
 
   # 8. Plot CPM boxplot if available
