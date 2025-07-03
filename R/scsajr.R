@@ -2264,7 +2264,7 @@ plot_segment_coverage <- function(
   if (ncol(layout_matrix) > 1) {
     layout_matrix[nrow(layout_matrix), -ncol(layout_matrix)] <- max(layout_matrix) + 1
   }
-  graphics::layout(layout_matrix, widths = c(rep(1, ncol(layout_matrix) - 1), 3), heights = c(rep(1, nrow(layout_matrix) - 1), 4))
+  graphics::layout(layout_matrix, widths = c(rep(1, ncol(layout_matrix) - 1), 3), heights = c(rep(1, nrow(layout_matrix) - 1), 6))
   graphics::par(bty = "n", tcl = -0.2, mgp = c(1.3, 0.3, 0), mar = c(0, 0.5, 0, 0), oma = oma, xpd = NA)
 
   # 8. Plot CPM boxplot if available
@@ -2282,14 +2282,16 @@ plot_segment_coverage <- function(
   # 10. Coverage and junction plotting per group
   bams <- unique(samples[, c("sample_id", "bam_path")])
   graphics::par(mar = c(0, 6, 1.1, 0), xpd = FALSE)
-  for (ct in celltypes) {
+  mid_cov <- (length(celltypes) + 1) %/% 2
+  for (i in seq_along(celltypes)) {
+    ct <- celltypes[i]
     cov <- covs[[ct]]
     # Load coverage if missing or range incomplete
     if (is.null(cov) || start < cov$start || stop > cov$end) {
       cov <- list()
-      for (i in seq_len(nrow(bams))) {
-        sample_id <- bams$sample_id[i]
-        bam_path <- bams$bam_path[i]
+      for (j in seq_len(nrow(bams))) {
+        sample_id <- bams$sample_id[j]
+        bam_path <- bams$bam_path[j]
         tags <- barcodes$barcode[barcodes$sample_id == sample_id & !is.na(barcodes[, groupby]) & barcodes[, groupby] == ct]
         if (length(tags) == 0) next
         cov[[length(cov) + 1]] <- plotCoverage::getReadCoverage(bam_path, chr, start, stop, strand = NA, scanBamFlags = scan_bam_flags, tagFilter = list(CB = tags))
@@ -2334,12 +2336,20 @@ plot_segment_coverage <- function(
       ylim = ylim_group, xaxt = "n"
     )
     graphics::abline(h = 0)
+
+    if (i == mid_cov) {
+      # grab current y‐axis limits
+      ymn <- par("usr")[3]
+      ymx <- par("usr")[4]
+      # put label half‐way up the panel, 3 lines into the left margin
+      mtext("Coverage",
+            side = 2,
+            line = 1.5,
+            at = (ymn + ymx) / 2,
+            outer = FALSE
+      )
+    }
   }
-  graphics::mtext("Coverage",
-                side  = 2,
-                line  = 3, # adjust this if you need more/less padding
-                outer = TRUE
-  )
 
   # 11. Transcript model plot
   graphics::par(mar = c(3, 6, 0.2, 0))
@@ -2348,7 +2358,7 @@ plot_segment_coverage <- function(
   # 12. CPM vs PSI scatter if both present
   if (!is.null(psi) && !is.null(cpm)) {
     lncol <- ceiling(n_groups / 30)
-    graphics::par(mar = c(3, 8 * lncol, 3, 0), xpd = NA)
+    graphics::par(mar = c(1, 8 * lncol, 3, 0), xpd = NA)
     mean_cpm <- sapply(cpm, mean)
     mean_psi <- sapply(psi, mean, na.rm = TRUE)
     visutils::plotVisium(
@@ -2366,9 +2376,13 @@ plot_segment_coverage <- function(
       xaxs = "r",
       yaxs = "r",
       legend.args = list(
-        x = graphics::grconvertX(0, "ndc", "user"),
-        y = graphics::grconvertY(1, "npc", "user"),
-        ncol = lncol
+        x  =   par("usr")[1] + diff(par("usr")[1:2]) * 0.02,
+        y  =   par("usr")[4] - diff(par("usr")[3:4]) * 0.02,
+        bty        = "n",
+        xpd        = NA,
+        ncol       = 1,
+        cex        = 0.8,
+        y.intersp  = 0.8
       )
     )
   }
