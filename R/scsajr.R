@@ -2351,7 +2351,6 @@ plot_segment_coverage <- function(
     }
   }
 
-
   # 11. Transcript model plot
   graphics::par(mar = c(3, 6, 0.2, 0))
   plotCoverage::plotTranscripts(gtf, new = TRUE, exon.col = NA, cds.col = NA, xlim = c(start, stop))
