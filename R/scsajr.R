@@ -2338,7 +2338,8 @@ plot_segment_coverage <- function(
 
     if (first_cov) {
       # Add y‐axis label only to the first coverage plot
-      graphics::mtext("Coverage", side = 2, line = 3, outer = FALSE)
+      usr <- graphics::par("usr")
+      graphics::mtext("Coverage", side = 2, line = 3, at = mean(usr[3:4]), outer = FALSE)
       first_cov <- FALSE
     }
   }
