@@ -2335,8 +2335,22 @@ plot_segment_coverage <- function(
       ylim = ylim_group, xaxt = "n"
     )
     graphics::abline(h = 0)
+
+    # once, place “Coverage” in the vertical center of this first panel
+    if (first_cov) {
+      # grab current y‐axis limits
+      ymn <- par("usr")[3]
+      ymx <- par("usr")[4]
+      # put label half‐way up the panel, 3 lines into the left margin
+      mtext("Coverage",
+            side = 2,
+            line = 3,
+            at = (ymn + ymx) / 2,
+            outer = FALSE
+      )
+      first_cov <- FALSE
+    }
   }
-  graphics::mtext("Coverage", side = 2, line = 2, outer = TRUE, adj = 0.5)
 
 
   # 11. Transcript model plot
