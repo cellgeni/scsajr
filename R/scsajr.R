@@ -2281,7 +2281,7 @@ plot_segment_coverage <- function(
 
   # 10. Coverage and junction plotting per group
   bams <- unique(samples[, c("sample_id", "bam_path")])
-  graphics::par(mar = c(0, 6, 1.1, 0), oma = c(6, 6, 3, 1), xpd = FALSE)
+  graphics::par(mar = c(0, 6, 1.1, 0), xpd = FALSE)
   for (ct in celltypes) {
     cov <- covs[[ct]]
     # Load coverage if missing or range incomplete
