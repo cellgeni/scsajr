@@ -18,7 +18,7 @@ output:
 ```
 
 ## Load packages
-```{r Load packages, message = FALSE, cache = TRUE}
+```{r Load packages, message = FALSE}
 library(Seurat)
 library(plotCoverage)
 library(clusterProfiler)
@@ -259,13 +259,13 @@ SummarizedExperiment::assay(pbge, "cpm") <- scsajr::calc_cpm(pbge)
 ```
 
 ## Visualise markers
-```{r Visualise markers, fig.width=12, fig.height=8, cache = TRUE}
+```{r Visualise markers, fig.width=8, fig.height=8, cache = TRUE}
 markers <- scsajr::select_all_markers(
   pbasf@metadata$markers, pbasf@metadata$all_celltype_test,
   dpsi_thr = 0.5, n = 4
 )
 
-par(oma = c(0, 8, 0, 0), mar = c(5, 4, 4, 1))
+par(oma = c(0, 14, 0, 2), mar = c(5, 9, 3, 4))
 # par(mar = c(0, 0.5, 0, 0), oma = c(6, 34, 3, 1), xpd = NA)
 
 scsajr::marker_heatmap(
