@@ -2282,15 +2282,16 @@ plot_segment_coverage <- function(
   # 10. Coverage and junction plotting per group
   bams <- unique(samples[, c("sample_id", "bam_path")])
   graphics::par(mar = c(0, 6, 1.1, 0), xpd = FALSE)
-  first_cov <- TRUE
-  for (ct in celltypes) {
+  mid_cov <- ceiling(length(celltypes) / 2)
+  for (i in seq_along(celltypes)) {
+    ct <- celltypes[i]
     cov <- covs[[ct]]
     # Load coverage if missing or range incomplete
     if (is.null(cov) || start < cov$start || stop > cov$end) {
       cov <- list()
-      for (i in seq_len(nrow(bams))) {
-        sample_id <- bams$sample_id[i]
-        bam_path <- bams$bam_path[i]
+      for (j in seq_len(nrow(bams))) {
+        sample_id <- bams$sample_id[j]
+        bam_path <- bams$bam_path[j]
         tags <- barcodes$barcode[barcodes$sample_id == sample_id & !is.na(barcodes[, groupby]) & barcodes[, groupby] == ct]
         if (length(tags) == 0) next
         cov[[length(cov) + 1]] <- plotCoverage::getReadCoverage(bam_path, chr, start, stop, strand = NA, scanBamFlags = scan_bam_flags, tagFilter = list(CB = tags))
@@ -2337,7 +2338,7 @@ plot_segment_coverage <- function(
     graphics::abline(h = 0)
 
     # once, place “Coverage” in the vertical center of this first panel
-    if (first_cov) {
+    if (i == mid_cov) {
       # grab current y‐axis limits
       ymn <- par("usr")[3]
       ymx <- par("usr")[4]
@@ -2348,7 +2349,6 @@ plot_segment_coverage <- function(
             at = (ymn + ymx) / 2,
             outer = FALSE
       )
-      first_cov <- FALSE
     }
   }
 
