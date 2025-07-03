@@ -2282,7 +2282,7 @@ plot_segment_coverage <- function(
   # 10. Coverage and junction plotting per group
   bams <- unique(samples[, c("sample_id", "bam_path")])
   graphics::par(mar = c(0, 6, 1.1, 0), xpd = FALSE)
-  mid_cov <- (length(celltypes) + 2) %/% 2
+  mid_cov <- (length(celltypes) + 1) %/% 2
   for (i in seq_along(celltypes)) {
     ct <- celltypes[i]
     cov <- covs[[ct]]
