@@ -2376,7 +2376,7 @@ plot_segment_coverage <- function(
       xaxs = "r",
       yaxs = "r",
       legend.args = list(
-        x = graphics::grconvertX(0.02, "npc", "user"),
+        x = graphics::grconvertX(0, "ndc", "user"),
         y = graphics::grconvertY(0.8, "npc", "user"),
         ncol = lncol
       )
