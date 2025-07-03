@@ -2335,14 +2335,9 @@ plot_segment_coverage <- function(
       ylim = ylim_group, xaxt = "n"
     )
     graphics::abline(h = 0)
-
-    if (first_cov) {
-      # Add y‐axis label only to the first coverage plot
-      usr <- graphics::par("usr")
-      graphics::mtext("Coverage", side = 2, line = 3, at = mean(usr[3:4]), outer = FALSE)
-      first_cov <- FALSE
-    }
   }
+  graphics::mtext("Coverage", side = 2, line = 2, outer = TRUE, adj = 0.5)
+
 
   # 11. Transcript model plot
   graphics::par(mar = c(3, 6, 0.2, 0))
