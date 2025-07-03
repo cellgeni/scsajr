@@ -2376,12 +2376,13 @@ plot_segment_coverage <- function(
       xaxs = "r",
       yaxs = "r",
       legend.args = list(
-          x           = "bottomleft",
-          inset       = c(0.02, 0.02),
-          bty         = "n",
-          ncol        = 1,
-          cex         = 0.8,
-          y.intersp   = 0.8
+        x  =   par("usr")[1] + diff(par("usr")[1:2]) * 0.02,
+        y  =   par("usr")[4] - diff(par("usr")[3:4]) * 0.02,
+        bty        = "n",
+        xpd        = NA,
+        ncol       = 1,
+        cex        = 0.8,
+        y.intersp  = 0.8
       )
     )
   }
