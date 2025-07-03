@@ -2344,7 +2344,7 @@ plot_segment_coverage <- function(
       # put label half‐way up the panel, 3 lines into the left margin
       mtext("Coverage",
             side = 2,
-            line = 3,
+            line = 1.5,
             at = (ymn + ymx) / 2,
             outer = FALSE
       )
