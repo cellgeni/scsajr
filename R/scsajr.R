@@ -2282,6 +2282,7 @@ plot_segment_coverage <- function(
   # 10. Coverage and junction plotting per group
   bams <- unique(samples[, c("sample_id", "bam_path")])
   graphics::par(mar = c(0, 6, 1.1, 0), xpd = FALSE)
+  first_cov <- TRUE
   for (ct in celltypes) {
     cov <- covs[[ct]]
     # Load coverage if missing or range incomplete
@@ -2334,12 +2335,13 @@ plot_segment_coverage <- function(
       ylim = ylim_group, xaxt = "n"
     )
     graphics::abline(h = 0)
+
+    if (first_cov) {
+      # Add y‐axis label only to the first coverage plot
+      graphics::mtext("Coverage", side = 2, line = 3, outer = FALSE)
+      first_cov <- FALSE
+    }
   }
-  graphics::mtext("Coverage",
-                side  = 2,
-                line  = 3, # adjust this if you need more/less padding
-                outer = TRUE
-  )
 
   # 11. Transcript model plot
   graphics::par(mar = c(3, 6, 0.2, 0))
