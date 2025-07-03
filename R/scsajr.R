@@ -2376,9 +2376,11 @@ plot_segment_coverage <- function(
       xaxs = "r",
       yaxs = "r",
       legend.args = list(
-        x = graphics::grconvertX(0, "ndc", "user"),
-        y = graphics::grconvertY(0.8, "npc", "user"),
-        ncol = lncol
+        x     = graphics::grconvertX(0, "ndc", "user"), # left device edge
+        y     = graphics::grconvertY(0.10, "ndc", "user"), # ~10% up from bottom
+        xpd   = NA, # allow into margin
+        inset = c(-0.02, 0), # nudge it 2% into the left margin
+        ncol  = 1 # single column
       )
     )
   }
