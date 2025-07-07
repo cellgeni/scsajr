@@ -2175,7 +2175,7 @@ plot_segment_coverage <- function(
     gtf,
     ylim_by_junc = FALSE,
     ylim = NULL,
-    oma = c(6, 34, 3, 1)) {
+    oma = c(2, 4, 6, 1)) {
   # 1. Argument validation
   if ((!is.null(data_as) || !is.null(data_ge)) && length(groupby) != 1) {
     stop("`groupby` must be a single column name when using `data_as` or `data_ge`.")
@@ -2397,7 +2397,7 @@ plot_segment_coverage <- function(
   # 13. Add main title across panels if sid is provided
   if (!is.null(sid)) {
     gene_info <- gene_descr[gid, ]
-    graphics::mtext(paste0(sid, " ", gene_info["name"], "\n", gene_info["descr"]), side = 3, outer = TRUE)
+    graphics::mtext(paste0(sid, " ", gene_info["name"], "\n", gene_info["descr"]), side = 3, outer = TRUE, line = 1.5)
   }
 
   invisible(covs)
