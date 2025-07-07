@@ -2249,6 +2249,14 @@ plot_segment_coverage <- function(
     celltypes <- unique(barcodes[, groupby])
   }
 
+  # 6b. Subset PSI/CPM to only those cell types
+  if (!is.null(psi)) {
+    psi <- psi[celltypes]
+  }
+  if (!is.null(cpm)) {
+    cpm <- cpm[celltypes]
+  }
+
   # 7. Build layout matrix
   #    If PSI present, allocate two left columns; if CPM, allocate one more
   n_groups <- length(celltypes)
