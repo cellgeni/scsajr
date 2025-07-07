@@ -1,5 +1,5 @@
 ^scsajr\.Rproj$
 ^\.Rproj\.user$
 ^LICENSE\.md$
-^.vscode$
-^test$
+^\.vscode$
+^tutorial($|/)
