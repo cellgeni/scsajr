@@ -2274,7 +2274,7 @@ plot_segment_coverage <- function(
   }
   graphics::layout(layout_matrix,
     widths = c(rep(1, ncol(layout_matrix) - 1), 3),
-    heights = c(rep(1, nrow(layout_matrix) - 1), 8)
+    heights = c(rep(1, nrow(layout_matrix) - 1), 4)
     )
   graphics::par(bty = "n", tcl = -0.2, mgp = c(1.3, 0.3, 0), mar = c(0, 0.5, 0, 0), oma = oma, xpd = NA)
 
@@ -2292,7 +2292,7 @@ plot_segment_coverage <- function(
 
   # 10. Coverage and junction plotting per group
   bams <- unique(samples[, c("sample_id", "bam_path")])
-  graphics::par(mar = c(0, 6, 1.1, 0), xpd = FALSE)
+  graphics::par(mar = c(0, 6, 0.2, 0), xpd = FALSE)
   mid_cov <- (length(celltypes) + 1) %/% 2
   for (i in seq_along(celltypes)) {
     ct <- celltypes[i]
@@ -2342,9 +2342,15 @@ plot_segment_coverage <- function(
     # Plot coverage+junction
     plotCoverage::plotReadCov(cov_sub,
       xlim = c(start, stop), ylab = "", xlab = chr,
-      main = ct, plot.junc.only.within = plot_junc_only_within,
+      main = "", plot.junc.only.within = plot_junc_only_within,
       min.junc.cov = min_junc_cov, min.junc.cov.f = min_junc_cov_f,
       ylim = ylim_group, xaxt = "n"
+    )
+    graphics::title(
+      main = ct,
+      line = -0.6, # move it *down* into the panel; play with this value
+      cex.main = 1, # base size (or whatever you prefer)
+      xpd = NA
     )
     graphics::abline(h = 0)
 
