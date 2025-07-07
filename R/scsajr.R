@@ -2243,7 +2243,7 @@ plot_segment_coverage <- function(
 
   # 6. Auto‐detect celltypes if missing
   if (is.null(celltypes) && !is.null(psi)) {
-    celltypes <- rev(names(psi))
+    celltypes <- names(psi)
   }
   if (is.null(celltypes)) {
     celltypes <- unique(barcodes[, groupby])
@@ -2281,13 +2281,13 @@ plot_segment_coverage <- function(
   # 8. Plot CPM boxplot if available
   if (!is.null(cpm)) {
     plot(1, t = "n", yaxs = "i", ylim = c(0.5, n_groups + 0.5), xlim = c(0, max(unlist(cpm))), yaxt = "n", xlab = "l10CPM", ylab = "")
-    graphics::boxplot(cpm, horizontal = TRUE, las = 1, add = TRUE, xpd = NA, cex.axis = 2, xaxt = "n")
+    graphics::boxplot(rev(cpm), horizontal = TRUE, las = 1, add = TRUE, xpd = NA, cex.axis = 2, xaxt = "n")
   }
 
   # 9. Plot PSI boxplot if available
   if (!is.null(psi)) {
     plot(1, t = "n", yaxs = "i", ylim = c(0.5, n_groups + 0.5), xlim = c(0, 1), yaxt = "n", xlab = "PSI", ylab = "")
-    graphics::boxplot(psi, horizontal = TRUE, las = 1, add = TRUE, yaxt = if (is.null(cpm)) "s" else "n")
+    graphics::boxplot(rev(psi), horizontal = TRUE, las = 1, add = TRUE, yaxt = if (is.null(cpm)) "s" else "n")
   }
 
   # 10. Coverage and junction plotting per group
@@ -2397,7 +2397,7 @@ plot_segment_coverage <- function(
   # 13. Add main title across panels if sid is provided
   if (!is.null(sid)) {
     gene_info <- gene_descr[gid, ]
-    graphics::mtext(paste0(sid, " ", gene_info["name"], "\n", gene_info["descr"]), side = 3, outer = TRUE, line = 1.5)
+    graphics::mtext(paste0(sid, " ", gene_info["name"], "\n", gene_info["descr"]), side = 3, outer = TRUE, line = 1.0)
   }
 
   invisible(covs)
