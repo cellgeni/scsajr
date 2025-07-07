@@ -12,7 +12,7 @@ curl "${url}_possorted_genome_bam.bam.bai" -o input/alignment.bam.bai
 curl "${url}_analysis.tar.gz" -o input/clusters.tar.gz
 
 tar -xzf input/clusters.tar.gz 
-echo -e "sample\t$(pwd)/input/alignment.bam" > input/samples.tsv
+echo -e "sample\t./input/alignment.bam" > input/samples.tsv
 awk -F, 'BEGIN { OFS="\t" }; NR>1 {print  "sample",$1,$2}' analysis/clustering/graphclust/clusters.csv > input/barcodes.tsv
 
 # Get nf-scsajr from GitHub
