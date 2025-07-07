@@ -2345,7 +2345,7 @@ plot_segment_coverage <- function(
       ymn <- par("usr")[3]
       ymx <- par("usr")[4]
       # put label half‐way up the panel, 3 lines into the left margin
-      mtext("Coverage",
+      mtext("coverage",
             side = 2,
             line = 1.5,
             at = (ymn + ymx) / 2,
@@ -2361,7 +2361,7 @@ plot_segment_coverage <- function(
   # 12. CPM vs PSI scatter if both present
   if (!is.null(psi) && !is.null(cpm)) {
     lncol <- ceiling(n_groups / 30)
-    graphics::par(mar = c(1, 4 * lncol, 3, 0), xpd = NA)
+    graphics::par(mar = c(1, 2 * lncol, 3, 0), xpd = NA)
     mean_cpm <- sapply(cpm, mean)
     mean_psi <- sapply(psi, mean, na.rm = TRUE)
     visutils::plotVisium(
@@ -2379,7 +2379,7 @@ plot_segment_coverage <- function(
       xaxs = "r",
       yaxs = "r",
       legend.args = list(
-        x = graphics::grconvertX(0, "ndc", "user"),
+        x = graphics::grconvertX(0.02, "ndc", "user"),
         y = graphics::grconvertY(1, "npc", "user"),
         ncol = lncol
       )
