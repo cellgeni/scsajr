@@ -2275,7 +2275,7 @@ plot_segment_coverage <- function(
   graphics::layout(layout_matrix,
     widths = c(rep(1, ncol(layout_matrix) - 1), 3),
     heights = c(rep(1, nrow(layout_matrix) - 1), 4)
-    )
+  )
   graphics::par(bty = "n", tcl = -0.2, mgp = c(1.3, 0.3, 0), mar = c(0, 0.5, 0, 0), oma = oma, xpd = NA)
 
   # 8. Plot CPM boxplot if available
@@ -2348,22 +2348,20 @@ plot_segment_coverage <- function(
     )
     graphics::title(
       main = ct,
-      line = -0.6, # move it *down* into the panel; play with this value
-      cex.main = 1, # base size (or whatever you prefer)
+      line = -0.6,
+      cex.main = 1,
       xpd = NA
     )
     graphics::abline(h = 0)
 
     if (i == mid_cov) {
-      # grab current y‐axis limits
-      ymn <- par("usr")[3]
-      ymx <- par("usr")[4]
-      # put label half‐way up the panel, 3 lines into the left margin
-      mtext("coverage",
-            side = 2,
-            line = 1.5,
-            at = (ymn + ymx) / 2,
-            outer = FALSE
+      ymn <- graphics::par("usr")[3]
+      ymx <- graphics::par("usr")[4]
+      graphics::mtext("coverage",
+        side = 2,
+        line = 1.5,
+        at = (ymn + ymx) / 2,
+        outer = FALSE
       )
     }
   }

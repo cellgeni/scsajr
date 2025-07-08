@@ -25,7 +25,7 @@ plot_segment_coverage(
   gtf,
   ylim_by_junc = FALSE,
   ylim = NULL,
-  oma = c(6, 34, 3, 1)
+  oma = c(2, 4, 6, 1)
 )
 }
 \arguments{
