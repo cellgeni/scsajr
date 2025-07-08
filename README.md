@@ -16,3 +16,6 @@ You can install the development version of scsajr from [GitHub](https://github.c
 # install.packages("pak")
 pak::pak("github::cellgeni/scsajr")
 ```
+
+## Tutorial
+Please check tutorial directory for the usage of functions
