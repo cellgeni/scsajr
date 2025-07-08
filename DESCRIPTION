@@ -1,6 +1,6 @@
 Package: scsajr
 Title: Utility Functions used in cellgeni/nf-scsajr Nextflow Pipeline
-Version: 0.0.0.9000
+Version: 25-189
 Authors@R: c(
         person("Akito", "Shima", email = "as82@sanger.ac.uk", role = c("aut"), comment = c(ORCID = "0000-0002-7092-7720")),
         person("Pasha", "Mazin", email = "pm19@sanger.ac.uk", role = c("aut", "cre"), comment = c(ORCID = "0000-0001-9268-3352"))
