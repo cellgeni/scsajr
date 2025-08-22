@@ -1983,7 +1983,7 @@ sum_covs <- function(cov_list) {
   # Ensure row names of all_juncs match original junction IDs if present
   # We'll use the original row names from r$juncs for those rows that match exactly.
   # But to maintain compatibility, we'll set row names to the coordinate string.
-  rownames(all_juncs) <- apply(all_juncs, 1, function(row) paste(row, collapse = "-"))
+  rownames(all_juncs) <- do.call(paste, c(all_juncs, sep = "-"))
 
   # 3. Initialize scores to zero
   all_juncs$score <- rep(0, nrow(all_juncs))
