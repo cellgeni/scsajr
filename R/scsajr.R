@@ -1983,7 +1983,7 @@ sum_covs <- function(cov_list) {
   # Ensure row names of all_juncs match original junction IDs if present
   # We'll use the original row names from r$juncs for those rows that match exactly.
   # But to maintain compatibility, we'll set row names to the coordinate string.
-  rownames(all_juncs) <- apply(all_juncs, 1, function(row) paste(row, collapse = "-"))
+  rownames(all_juncs) <- do.call(paste, c(all_juncs, sep = "-"))
 
   # 3. Initialize scores to zero
   all_juncs$score <- rep(0, nrow(all_juncs))
@@ -2314,7 +2314,7 @@ plot_segment_coverage <- function(
     }
     # Subset cov to [start, stop]
     cov_sub <- subset_cov(covs[[ct]], start, stop)
-
+    
     # Determine junction filter
     juncs <- cov_sub$juncs
     junc_filter <- rep(TRUE, nrow(juncs))
@@ -2401,7 +2401,7 @@ plot_segment_coverage <- function(
   # 13. Add main title across panels if sid is provided
   if (!is.null(sid)) {
     gene_info <- gene_descr[gid, ]
-    graphics::mtext(paste0(sid, " ", gene_info["name"], "\n", gene_info["descr"]), side = 3, outer = TRUE, line = 1.0)
+    graphics::mtext(paste0(sid, " ", gene_info["name"], "\n", gene_info["descr"]), side = 3, outer = TRUE, line = 0.0)
   }
 
   invisible(covs)
