@@ -341,7 +341,7 @@ rbind_matrix <- function(mat_list, colnames_union = NULL) {
   adjusted_list <- lapply(mat_list, function(mat) {
     # Coerce to sparse dgCMatrix if not already
     if (!inherits(mat, "dgCMatrix")) {
-      mat <- methods::as(mat, "dgCMatrix")
+      mat <- methods::as(mat, "CsparseMatrix")
     }
     missing_cols <- setdiff(colnames_union, colnames(mat))
     if (length(missing_cols) > 0) {
